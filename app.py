@@ -12,10 +12,10 @@ import os
 # --------------------------------------------------
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # --------------------------------------------------
-# PATHS (RENDER SAFE)
+# PATHS (SAFE FOR RENDER & TERMUX)
 # --------------------------------------------------
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,17 +23,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # PDF template MUST be inside goodwill_backend/
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_Template1.pdf")
 
-# Render allows writes ONLY to /tmp
-OUTPUT_DIR = "/tmp/tickets"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 # --------------------------------------------------
 # HARD-CODED EVENT DATA
 # --------------------------------------------------
 
-HARD_CODED_EVENT_DATE = "Dec 30, 2025"
-HARD_CODED_PRICE = "5"
-HARD_CODED_EVENT_PLACE = "Nairobi"
+EVENT_DATE = "Dec 30, 2025"
+TICKET_PRICE = "5"
+EVENT_PLACE = "Nairobi"
 
 # --------------------------------------------------
 # HELPERS
@@ -44,25 +40,24 @@ def generate_ticket_no():
 
 
 def fill_pdf(reader: PdfReader, full_name: str):
-    """Fill PDF form fields and return filled PDF bytes"""
+    """Fill PDF form fields and return filled PDF stream"""
 
     writer = PdfWriter()
-    page = reader.pages[0]
-    writer.add_page(page)
+    writer.add_page(reader.pages[0])
 
     ticket_no = generate_ticket_no()
 
     fields = {
-        "Text1": HARD_CODED_EVENT_DATE,
+        "Text1": EVENT_DATE,
         "Text2": full_name,
-        "Text3": HARD_CODED_PRICE,
-        "Text4": HARD_CODED_EVENT_PLACE,
+        "Text3": TICKET_PRICE,
+        "Text4": EVENT_PLACE,
         "Text5": ticket_no,
     }
 
     writer.update_page_form_field_values(writer.pages[0], fields)
 
-    # Preserve form appearance
+    # Preserve appearance
     if "/AcroForm" in reader.trailer["/Root"]:
         writer._root_object.update({
             NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]
@@ -78,7 +73,7 @@ def fill_pdf(reader: PdfReader, full_name: str):
 
 
 def flatten_pdf(filled_stream: io.BytesIO):
-    """Flatten PDF (remove form fields permanently)"""
+    """Flatten PDF (remove all form fields permanently)"""
 
     reader = PdfReader(filled_stream)
     writer = PdfWriter()
@@ -100,67 +95,59 @@ def flatten_pdf(filled_stream: io.BytesIO):
 # ROUTES
 # --------------------------------------------------
 
+@app.route("/", methods=["GET"])
+def health_check():
+    return jsonify({"status": "Raffle API running"}), 200
+
+
 @app.route("/generate_ticket", methods=["POST"])
 def generate_ticket():
     data = request.get_json(force=True)
 
     full_name = data.get("name", "").strip()
     quantity = int(data.get("quantity", 1))
-    order_id = data.get("order_id", "UNKNOWN")
 
     if not full_name:
         return jsonify({"error": "Missing required field: name"}), 400
 
     try:
         reader = PdfReader(TEMPLATE_PATH)
-        generated_files = []
 
-        # Generate tickets
-        for _ in range(quantity):
+        # -------- SINGLE TICKET → PDF --------
+        if quantity == 1:
             filled_stream, ticket_no = fill_pdf(reader, full_name)
             flattened_stream = flatten_pdf(filled_stream)
 
-            filename = f"RaffleTicket_{ticket_no}.pdf"
-            filepath = os.path.join(OUTPUT_DIR, filename)
+            return send_file(
+                flattened_stream,
+                as_attachment=True,
+                download_name=f"RaffleTicket_{ticket_no}.pdf",
+                mimetype="application/pdf"
+            )
 
-            with open(filepath, "wb") as f:
-                f.write(flattened_stream.read())
+        # -------- MULTIPLE TICKETS → ZIP --------
+        zip_stream = io.BytesIO()
+        with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_DEFLATED) as zf:
+            for _ in range(quantity):
+                filled_stream, ticket_no = fill_pdf(reader, full_name)
+                flattened_stream = flatten_pdf(filled_stream)
+                zf.writestr(
+                    f"RaffleTicket_{ticket_no}.pdf",
+                    flattened_stream.read()
+                )
 
-            generated_files.append(filename)
+        zip_stream.seek(0)
 
-        # SINGLE ticket → direct PDF download
-        if quantity == 1:
-            return jsonify({
-                "success": True,
-                "download_url": f"/download/{generated_files[0]}"
-            })
-
-        # MULTIPLE tickets → ZIP
-        zip_name = f"RaffleTickets_{order_id}.zip"
-        zip_path = os.path.join(OUTPUT_DIR, zip_name)
-
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            for filename in generated_files:
-                zf.write(os.path.join(OUTPUT_DIR, filename), filename)
-
-        return jsonify({
-            "success": True,
-            "download_url": f"/download/{zip_name}"
-        })
+        return send_file(
+            zip_stream,
+            as_attachment=True,
+            download_name=f"RaffleTickets_{full_name.replace(' ', '_')}.zip",
+            mimetype="application/zip"
+        )
 
     except Exception as e:
         print("❌ Ticket generation error:", e)
         return jsonify({"error": "Ticket generation failed"}), 500
-
-
-@app.route("/download/<filename>")
-def download_file(filename):
-    filepath = os.path.join(OUTPUT_DIR, filename)
-
-    if not os.path.exists(filepath):
-        return jsonify({"error": "File not found"}), 404
-
-    return send_file(filepath, as_attachment=True)
 
 # --------------------------------------------------
 # MAIN
