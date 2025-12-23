@@ -88,22 +88,27 @@ def generate_ticket_with_placeholders(
             # Clear placeholder area
             page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
 
-            # Dynamic text insertion
+            # Dynamic text insertion with proper measurement
             text_str = str(value)
             fontname = "helv"
             fontsize = 12
             font = fitz.Font(fontname=fontname)
 
-            # measure text width correctly
+            # Measure text width and adjust flex rect
             text_width = font.text_length(text_str, fontsize=fontsize)
             min_width = rect.width
             new_width = max(min_width, text_width + 6)
-
             flex_rect = fitz.Rect(rect.x0, rect.y0, rect.x0 + new_width, rect.y1)
 
-            # vertical centering
+            # Shrink font if text wider than rect
+            while text_width > flex_rect.width - 2 and fontsize > 6:
+                fontsize -= 0.5
+                text_width = font.text_length(text_str, fontsize=fontsize)
+
+            # Vertical centering
             y_position = flex_rect.y0 + (flex_rect.height - fontsize) / 2
 
+            # Insert text inside flexible box
             page.insert_text(
                 (flex_rect.x0 + 2, y_position),
                 text_str,
