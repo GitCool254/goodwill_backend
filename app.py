@@ -92,16 +92,17 @@ def generate_ticket_with_placeholders(
             text_str = str(value)
             fontname = "helv"
             fontsize = 12
+            font = fitz.Font(fontname=fontname)
 
-            # measure text width
-            text_width = fitz.get_text_length(text_str, fontname=fontname, fontsize=fontsize)
+            # measure text width correctly
+            text_width = font.text_length(text_str, fontsize=fontsize)
             min_width = rect.width
             new_width = max(min_width, text_width + 6)
 
             flex_rect = fitz.Rect(rect.x0, rect.y0, rect.x0 + new_width, rect.y1)
 
             # vertical centering
-            y_position = flex_rect.y1 - ((flex_rect.height - fontsize) / 2)
+            y_position = flex_rect.y0 + (flex_rect.height - fontsize) / 2
 
             page.insert_text(
                 (flex_rect.x0 + 2, y_position),
