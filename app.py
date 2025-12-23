@@ -47,14 +47,31 @@ def create_text_overlay(full_name, ticket_no):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
 
-    c.setFont("Helvetica-Bold", 11)
-
-    # ⚠️ Adjust coordinates once to match your template
-    c.drawString(120, 520, EVENT_DATE)
-    c.drawString(120, 490, full_name)
-    c.drawString(120, 460, TICKET_PRICE)
-    c.drawString(120, 430, EVENT_PLACE)
-    c.drawString(120, 400, ticket_no)
+    # Use a larger, bolder font for better visibility
+    c.setFont("Helvetica-Bold", 14)
+    
+    # Set text color to solid black for maximum visibility
+    c.setFillColorRGB(0, 0, 0)
+    
+    # Draw background rectangles behind text for better visibility
+    c.setFillColorRGB(1, 1, 1)  # White background
+    c.rect(100, 510, 200, 25, fill=1, stroke=0)  # Behind DATE
+    c.rect(100, 480, 200, 25, fill=1, stroke=0)  # Behind NAME
+    c.rect(100, 450, 200, 25, fill=1, stroke=0)  # Behind PRICE
+    c.rect(100, 420, 200, 25, fill=1, stroke=0)  # Behind PLACE
+    c.rect(100, 390, 200, 25, fill=1, stroke=0)  # Behind TICKET NO
+    
+    # Draw text with black color for maximum contrast
+    c.setFillColorRGB(0, 0, 0)
+    c.setFont("Helvetica-Bold", 14)
+    
+    # Adjusted coordinates for better visibility (middle of page)
+    # You may need to adjust these based on your template layout
+    c.drawString(110, 520, f"Date: {EVENT_DATE}")
+    c.drawString(110, 490, f"Name: {full_name}")
+    c.drawString(110, 460, f"Price: ${TICKET_PRICE}")
+    c.drawString(110, 430, f"Location: {EVENT_PLACE}")
+    c.drawString(110, 400, f"Ticket No: {ticket_no}")
 
     c.showPage()
     c.save()
