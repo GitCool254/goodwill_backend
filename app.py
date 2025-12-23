@@ -1,11 +1,12 @@
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import BooleanObject, NameObject
 import io
 import random
 import zipfile
 import os
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 # --------------------------------------------------
 # APP SETUP
@@ -39,57 +40,49 @@ def generate_ticket_no():
     return f"GWS-{random.randint(100000, 999999)}"
 
 
-def fill_pdf(reader: PdfReader, full_name: str):
-    """Fill PDF form fields and return filled PDF stream"""
+def create_text_overlay(full_name, ticket_no):
+    """
+    Creates a PDF overlay with permanent text (not form fields)
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+
+    c.setFont("Helvetica-Bold", 11)
+
+    # ⚠️ Adjust coordinates once to match your template
+    c.drawString(120, 520, EVENT_DATE)
+    c.drawString(120, 490, full_name)
+    c.drawString(120, 460, TICKET_PRICE)
+    c.drawString(120, 430, EVENT_PLACE)
+    c.drawString(120, 400, ticket_no)
+
+    c.showPage()
+    c.save()
+
+    buffer.seek(0)
+    return buffer
+
+
+def merge_overlay_with_template(overlay_stream):
+    """
+    Merges text overlay onto the ticket template
+    """
+    template_reader = PdfReader(TEMPLATE_PATH)
+    overlay_reader = PdfReader(overlay_stream)
 
     writer = PdfWriter()
-    writer.add_page(reader.pages[0])
 
-    ticket_no = generate_ticket_no()
+    base_page = template_reader.pages[0]
+    overlay_page = overlay_reader.pages[0]
 
-    fields = {
-        "Text1": EVENT_DATE,
-        "Text2": full_name,
-        "Text3": TICKET_PRICE,
-        "Text4": EVENT_PLACE,
-        "Text5": ticket_no,
-    }
-
-    writer.update_page_form_field_values(writer.pages[0], fields)
-
-    # Preserve appearance
-    if "/AcroForm" in reader.trailer["/Root"]:
-        writer._root_object.update({
-            NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]
-        })
-
-    writer._root_object["/AcroForm"][NameObject("/NeedAppearances")] = BooleanObject(True)
+    base_page.merge_page(overlay_page)
+    writer.add_page(base_page)
 
     output = io.BytesIO()
     writer.write(output)
     output.seek(0)
 
-    return output, ticket_no
-
-
-def flatten_pdf(filled_stream: io.BytesIO):
-    """Flatten PDF (remove all form fields permanently)"""
-
-    reader = PdfReader(filled_stream)
-    writer = PdfWriter()
-
-    for page in reader.pages:
-        writer.add_page(page)
-
-    # Remove AcroForm completely
-    if "/AcroForm" in writer._root_object:
-        del writer._root_object["/AcroForm"]
-
-    flattened = io.BytesIO()
-    writer.write(flattened)
-    flattened.seek(0)
-
-    return flattened
+    return output
 
 # --------------------------------------------------
 # ROUTES
@@ -111,15 +104,14 @@ def generate_ticket():
         return jsonify({"error": "Missing required field: name"}), 400
 
     try:
-        reader = PdfReader(TEMPLATE_PATH)
-
         # -------- SINGLE TICKET → PDF --------
         if quantity == 1:
-            filled_stream, ticket_no = fill_pdf(reader, full_name)
-            flattened_stream = flatten_pdf(filled_stream)
+            ticket_no = generate_ticket_no()
+            overlay = create_text_overlay(full_name, ticket_no)
+            final_pdf = merge_overlay_with_template(overlay)
 
             return send_file(
-                flattened_stream,
+                final_pdf,
                 as_attachment=True,
                 download_name=f"RaffleTicket_{ticket_no}.pdf",
                 mimetype="application/pdf"
@@ -129,11 +121,13 @@ def generate_ticket():
         zip_stream = io.BytesIO()
         with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_DEFLATED) as zf:
             for _ in range(quantity):
-                filled_stream, ticket_no = fill_pdf(reader, full_name)
-                flattened_stream = flatten_pdf(filled_stream)
+                ticket_no = generate_ticket_no()
+                overlay = create_text_overlay(full_name, ticket_no)
+                final_pdf = merge_overlay_with_template(overlay)
+
                 zf.writestr(
                     f"RaffleTicket_{ticket_no}.pdf",
-                    flattened_stream.read()
+                    final_pdf.read()
                 )
 
         zip_stream.seek(0)
