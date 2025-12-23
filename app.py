@@ -46,8 +46,12 @@ def generate_ticket_with_placeholders(
     event_time
 ):
     """
-    Replaces visible placeholders in the PDF with permanent bold text.
+    Replaces visible placeholders in the PDF with permanent bold text,
+    dynamically resizes boxes, and combines DATE+TIME if template allows.
     """
+    if not os.path.exists(TEMPLATE_PATH):
+        raise FileNotFoundError(f"Template not found: {TEMPLATE_PATH}")
+
     doc = fitz.open(TEMPLATE_PATH)
     page = doc[0]
 
@@ -60,25 +64,51 @@ def generate_ticket_with_placeholders(
         "{{TIME}}": event_time,
     }
 
+    # Prepare combined DATE+TIME
+    combined_placeholder = "{{DATE}} {{TIME}}"
+    combined_value = f"{replacements.get('{{DATE}}','')} {replacements.get('{{TIME}}','')}".strip()
+
     for placeholder, value in replacements.items():
-        matches = page.search_for(placeholder)
+        # Check for combined placeholder first
+        if placeholder in ["{{DATE}}", "{{TIME}}"]:
+            matches = page.search_for(combined_placeholder)
+            if matches:
+                placeholder = combined_placeholder
+                value = combined_value
+            else:
+                matches = page.search_for(placeholder)
+        else:
+            matches = page.search_for(placeholder)
 
         if not matches:
             print(f"⚠️ Placeholder not found: {placeholder}")
             continue
 
         for rect in matches:
-            # Clear placeholder
+            # Clear placeholder area
             page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
 
-            # Insert permanent bold text
+            # Dynamic text insertion
+            text_str = str(value)
+            fontname = "helv"
+            fontsize = 12
+
+            # measure text width
+            text_width = fitz.get_text_length(text_str, fontname=fontname, fontsize=fontsize)
+            min_width = rect.width
+            new_width = max(min_width, text_width + 6)
+
+            flex_rect = fitz.Rect(rect.x0, rect.y0, rect.x0 + new_width, rect.y1)
+
+            # vertical centering
+            y_position = flex_rect.y1 - ((flex_rect.height - fontsize) / 2)
+
             page.insert_text(
-                (rect.x0 + 2, rect.y1 - 3),
-                value,
-                fontsize=12,
-                fontname="helv",
-                color=(0, 0, 0),
-                render_mode=2  # bold
+                (flex_rect.x0 + 2, y_position),
+                text_str,
+                fontsize=fontsize,
+                fontname=fontname,
+                color=(0, 0, 0)
             )
 
     output = io.BytesIO()
@@ -160,7 +190,6 @@ def generate_ticket():
     except Exception as e:
         print("❌ Ticket generation error:", e)
         return jsonify({"error": "Ticket generation failed"}), 500
-
 
 # --------------------------------------------------
 # MAIN
