@@ -27,6 +27,7 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 EVENT_DATE = "Dec 30, 2025"
 TICKET_PRICE = "5"
 EVENT_PLACE = "Nairobi"
+EVENT_TIME = "5PM"
 
 # --------------------------------------------------
 # HELPERS
@@ -41,7 +42,8 @@ def generate_ticket_with_placeholders(
     ticket_no,
     event_date,
     ticket_price,
-    event_place
+    event_place,
+    event_time
 ):
     """
     Replaces visible placeholders in the PDF with permanent bold text.
@@ -55,6 +57,7 @@ def generate_ticket_with_placeholders(
         "{{TICKET_PRICE}}": ticket_price,
         "{{EVENT_PLACE}}": event_place,
         "{{DATE}}": event_date,
+        "{{TIME}}": event_time,
     }
 
     for placeholder, value in replacements.items():
@@ -115,6 +118,7 @@ def generate_ticket():
                 event_date=EVENT_DATE,
                 ticket_price=TICKET_PRICE,
                 event_place=EVENT_PLACE,
+                event_time=EVENT_TIME,
             )
 
             return send_file(
@@ -136,6 +140,7 @@ def generate_ticket():
                     EVENT_DATE,
                     TICKET_PRICE,
                     EVENT_PLACE,
+                    EVENT_TIME,
                 )
 
                 zf.writestr(
