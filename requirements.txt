@@ -1,5 +1,4 @@
 Flask
 gunicorn
-PyPDF2
-reportlab
 flask-cors
+PyMuPDF
