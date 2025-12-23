@@ -47,31 +47,33 @@ def create_text_overlay(full_name, ticket_no):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
 
-    # Use a larger, bolder font for better visibility
-    c.setFont("Helvetica-Bold", 14)
-    
-    # Set text color to solid black for maximum visibility
+    # Use black color for text
     c.setFillColorRGB(0, 0, 0)
     
-    # Draw background rectangles behind text for better visibility
-    c.setFillColorRGB(1, 1, 1)  # White background
-    c.rect(100, 510, 200, 25, fill=1, stroke=0)  # Behind DATE
-    c.rect(100, 480, 200, 25, fill=1, stroke=0)  # Behind NAME
-    c.rect(100, 450, 200, 25, fill=1, stroke=0)  # Behind PRICE
-    c.rect(100, 420, 200, 25, fill=1, stroke=0)  # Behind PLACE
-    c.rect(100, 390, 200, 25, fill=1, stroke=0)  # Behind TICKET NO
+    # Based on your template structure, we need to place text
+    # to the right of the labels (DATE:, Name:, etc.)
     
-    # Draw text with black color for maximum contrast
-    c.setFillColorRGB(0, 0, 0)
-    c.setFont("Helvetica-Bold", 14)
+    # Font settings
+    c.setFont("Helvetica-Bold", 12)
     
-    # Adjusted coordinates for better visibility (middle of page)
-    # You may need to adjust these based on your template layout
-    c.drawString(110, 520, f"Date: {EVENT_DATE}")
-    c.drawString(110, 490, f"Name: {full_name}")
-    c.drawString(110, 460, f"Price: ${TICKET_PRICE}")
-    c.drawString(110, 430, f"Location: {EVENT_PLACE}")
-    c.drawString(110, 400, f"Ticket No: {ticket_no}")
+    # Adjust these coordinates based on where the blank spaces are in your template
+    # The first number is X (horizontal), second is Y (vertical)
+    
+    # Try these coordinates (adjust as needed):
+    # DATE: - placed to the right of "DATE:"
+    c.drawString(80, 650, EVENT_DATE)  # Adjust Y value based on template
+    
+    # Name: - placed to the right of "Name:"
+    c.drawString(80, 620, full_name)  # Adjust Y value based on template
+    
+    # Ticket Price: - placed to the right of "Ticket Price:"
+    c.drawString(80, 590, TICKET_PRICE)  # Adjust Y value based on template
+    
+    # Event Place: - placed to the right of "Event Place:"
+    c.drawString(80, 560, EVENT_PLACE)  # Adjust Y value based on template
+    
+    # TICKET NO: - placed to the right of "TICKET NO:"
+    c.drawString(80, 530, ticket_no)  # Adjust Y value based on template
 
     c.showPage()
     c.save()
