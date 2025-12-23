@@ -51,7 +51,7 @@ def generate_ticket_with_placeholders(
 
     replacements = {
         "{{NAME}}": full_name,
-        "{{TICKET_NO}}": ticket_no,
+        "{{TICKET-NO}}": ticket_no,
         "{{TICKET_PRICE}}": ticket_price,
         "{{EVENT_PLACE}}": event_place,
         "{{DATE}}": event_date,
