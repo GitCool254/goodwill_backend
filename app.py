@@ -61,19 +61,19 @@ def create_text_overlay(full_name, ticket_no):
     
     # Try these coordinates (adjust as needed):
     # DATE: - placed to the right of "DATE:"
-    c.drawString(80, 650, EVENT_DATE)  # Adjust Y value based on template
+    c.drawString(450, 700, EVENT_DATE)  # Adjust Y value based on template
     
     # Name: - placed to the right of "Name:"
-    c.drawString(80, 620, full_name)  # Adjust Y value based on template
+    c.drawString(100, 620, full_name)  # Adjust Y value based on template
     
     # Ticket Price: - placed to the right of "Ticket Price:"
-    c.drawString(80, 590, TICKET_PRICE)  # Adjust Y value based on template
+    c.drawString(100, 580, TICKET_PRICE)  # Adjust Y value based on template
     
     # Event Place: - placed to the right of "Event Place:"
-    c.drawString(80, 560, EVENT_PLACE)  # Adjust Y value based on template
+    c.drawString(100, 540, EVENT_PLACE)  # Adjust Y value based on template
     
     # TICKET NO: - placed to the right of "TICKET NO:"
-    c.drawString(80, 530, ticket_no)  # Adjust Y value based on template
+    c.drawString(100, 500, ticket_no)  # Adjust Y value based on template
 
     c.showPage()
     c.save()
