@@ -54,6 +54,7 @@ def generate_ticket_with_placeholders(
 
     doc = fitz.open(TEMPLATE_PATH)
     page = doc[0]
+    page.wrap_contents()
 
     replacements = {
         "{{NAME}}": full_name,
