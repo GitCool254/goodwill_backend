@@ -106,15 +106,13 @@ def generate_ticket_with_placeholders(
                 text_width = font.text_length(text_str, fontsize=fontsize)
 
             # Vertical centering
-            y_position = flex_rect.y0 + (flex_rect.height - fontsize) / 2
-
-            # Insert text inside flexible box
-            page.insert_text(
-                (flex_rect.x0 + 2, y_position),
+            page.insert_textbox(
+                flex_rect,
                 text_str,
                 fontsize=fontsize,
                 fontname=fontname,
-                color=(0, 0, 0)
+                color=(0, 0, 0),
+                align=fitz.TEXT_ALIGN_LEFT
             )
 
     output = io.BytesIO()
