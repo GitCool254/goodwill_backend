@@ -118,7 +118,8 @@ def generate_ticket_with_placeholders(
                 fontsize=fontsize,
                 fontname=fontname,
                 color=(0, 0, 0),
-                align=fitz.TEXT_ALIGN_LEFT
+                align=fitz.TEXT_ALIGN_LEFT,
+                overlay=True
             )
 
     output = io.BytesIO()
