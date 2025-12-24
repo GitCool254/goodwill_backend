@@ -31,6 +31,9 @@ EVENT_TIME = "5PM"
 
 MAX_NAME_LENGTH = 30
 MAX_PLACE_LENGTH = 35
+
+MAX_EXPAND_CHARS = 25
+EXPAND_PADDING = 6
 # --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
@@ -100,9 +103,14 @@ def generate_ticket_with_placeholders(
                 fontsize=fontsize
             )
 
-            # Expand white rectangle to fit text
-            min_width = rect.width
-            new_width = max(min_width, text_width + 6)
+            # Decide whether expansion is allowed
+            if len(text_str) <= MAX_EXPAND_CHARS:
+                # Allow controlled expansion
+                new_width = max(rect.width, text_width + EXPAND_PADDING)
+            else:
+                # Lock width to original placeholder
+                new_width = rect.width
+
             flex_rect = fitz.Rect(
                 rect.x0,
                 rect.y0,
