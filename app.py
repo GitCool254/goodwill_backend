@@ -29,6 +29,8 @@ TICKET_PRICE = "5"
 EVENT_PLACE = "District of Colombia, DC, United States"
 EVENT_TIME = "5PM"
 
+MAX_NAME_LENGTH = 30
+MAX_PLACE_LENGTH = 35
 # --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
@@ -155,7 +157,16 @@ def generate_ticket():
     data = request.get_json(force=True)
 
     full_name = data.get("name", "").strip()
+    event_place = data.get("event_place", EVENT_PLACE).strip()
     quantity = int(data.get("quantity", 1))
+
+    # ✅ Enforce name length
+    if len(full_name) > MAX_NAME_LENGTH:
+        full_name = full_name[:MAX_NAME_LENGTH] + "…"
+
+    # ✅ Enforce event place length
+    if len(event_place) > MAX_PLACE_LENGTH:
+        event_place = event_place[:MAX_PLACE_LENGTH] + "…"
 
     if not full_name:
         return jsonify({"error": "Missing required field: name"}), 400
@@ -170,7 +181,7 @@ def generate_ticket():
                 ticket_no=ticket_no,
                 event_date=EVENT_DATE,
                 ticket_price=TICKET_PRICE,
-                event_place=EVENT_PLACE,
+                event_place=event_place,
                 event_time=EVENT_TIME,
             )
 
