@@ -103,13 +103,28 @@ def generate_ticket_with_placeholders(
                 fontsize=fontsize
             )
 
-            # Decide whether expansion is allowed
+            # --- Controlled expansion logic (WORKING) ---
+
+            BASE_WIDTH = rect.width          # original placeholder width
+            CHAR_WIDTH = fontsize * 0.6      # average character width (points)
+            MAX_EXTRA_WIDTH = MAX_EXPAND_CHARS * CHAR_WIDTH
+
             if len(text_str) <= MAX_EXPAND_CHARS:
-                # Allow controlled expansion
-                new_width = max(rect.width, text_width + EXPAND_PADDING)
+                # Expand smoothly up to limit
+                new_width = min(
+                    BASE_WIDTH + (len(text_str) * CHAR_WIDTH),
+                    BASE_WIDTH + MAX_EXTRA_WIDTH
+                )
             else:
-                # Lock width to original placeholder
-                new_width = rect.width
+                # Lock width once limit exceeded
+                new_width = BASE_WIDTH + MAX_EXTRA_WIDTH
+
+            flex_rect = fitz.Rect(
+                rect.x0,
+                rect.y0,
+                rect.x0 + new_width,
+                rect.y1
+            )
 
             flex_rect = fitz.Rect(
                 rect.x0,
