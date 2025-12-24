@@ -34,6 +34,7 @@ MAX_PLACE_LENGTH = 35
 
 MAX_EXPAND_CHARS = 25
 EXPAND_PADDING = 6
+
 # --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
@@ -50,17 +51,12 @@ def generate_ticket_with_placeholders(
     event_place,
     event_time
 ):
-    """
-    Replaces visible placeholders in the PDF with permanent text.
-    White placeholder rectangles dynamically resize to text width.
-    """
-
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Template not found: {TEMPLATE_PATH}")
 
     doc = fitz.open(TEMPLATE_PATH)
     page = doc[0]
-    page.wrap_contents()  # REQUIRED for design-exported PDFs
+    page.wrap_contents()
 
     replacements = {
         "{{NAME}}": full_name,
@@ -76,7 +72,6 @@ def generate_ticket_with_placeholders(
 
     for placeholder, value in replacements.items():
 
-        # Handle combined DATE + TIME
         if placeholder in ("{{DATE}}", "{{TIME}}"):
             matches = page.search_for(combined_placeholder)
             if matches:
@@ -88,7 +83,6 @@ def generate_ticket_with_placeholders(
             matches = page.search_for(placeholder)
 
         if not matches:
-            print(f"⚠️ Placeholder not found: {placeholder}")
             continue
 
         for rect in matches:
@@ -96,28 +90,24 @@ def generate_ticket_with_placeholders(
             fontname = "helv"
             fontsize = 12
 
-            # Measure text width
+            # --- Measure actual text width ---
             text_width = fitz.get_text_length(
                 text_str,
                 fontname=fontname,
                 fontsize=fontsize
             )
 
-            # --- Controlled expansion logic (WORKING) ---
+            BASE_WIDTH = rect.width
 
-            BASE_WIDTH = rect.width          # original placeholder width
-            CHAR_WIDTH = fontsize * 0.6      # average character width (points)
-            MAX_EXTRA_WIDTH = MAX_EXPAND_CHARS * CHAR_WIDTH
-
+            # --- RECTANGLE SIZE LOGIC ---
             if len(text_str) <= MAX_EXPAND_CHARS:
-                # Expand smoothly up to limit
-                new_width = min(
-                    BASE_WIDTH + (len(text_str) * CHAR_WIDTH),
-                    BASE_WIDTH + MAX_EXTRA_WIDTH
-                )
+                # Grow OR shrink naturally to text width
+                new_width = max(BASE_WIDTH, text_width + EXPAND_PADDING)
             else:
-                # Lock width once limit exceeded
-                new_width = BASE_WIDTH + MAX_EXTRA_WIDTH
+                # Lock rectangle width at 25-character width
+                avg_char_width = text_width / max(len(text_str), 1)
+                locked_width = (avg_char_width * MAX_EXPAND_CHARS) + EXPAND_PADDING
+                new_width = max(BASE_WIDTH, locked_width)
 
             flex_rect = fitz.Rect(
                 rect.x0,
@@ -126,32 +116,25 @@ def generate_ticket_with_placeholders(
                 rect.y1
             )
 
-            flex_rect = fitz.Rect(
-                rect.x0,
-                rect.y0,
-                rect.x0 + new_width,
-                rect.y1
-            )
-
-            # Clear background
+            # --- Clear background ---
             page.draw_rect(
                 flex_rect,
                 color=(1, 1, 1),
                 fill=(1, 1, 1)
             )
 
-            # Reduce font if still too wide
+            # --- Auto-shrink font if needed ---
             while fontsize > 6 and fitz.get_text_length(
                 text_str,
                 fontname=fontname,
                 fontsize=fontsize
-            ) > flex_rect.width - 2:
+            ) > (flex_rect.width - 4):
                 fontsize -= 0.5
 
-            # Vertical centering (same logic as working generator)
-            y_position = flex_rect.y1 - ((flex_rect.height - fontsize) / 2)
+            # --- Vertical centering ---
+            y_position = flex_rect.y0 + (flex_rect.height - fontsize) / 2
 
-            # Draw text (ALWAYS visible)
+            # --- Draw text ---
             page.insert_text(
                 (flex_rect.x0 + 2, y_position),
                 text_str,
@@ -183,11 +166,9 @@ def generate_ticket():
     event_place = data.get("event_place", EVENT_PLACE).strip()
     quantity = int(data.get("quantity", 1))
 
-    # ✅ Enforce name length
     if len(full_name) > MAX_NAME_LENGTH:
         full_name = full_name[:MAX_NAME_LENGTH] + "…"
 
-    # ✅ Enforce event place length
     if len(event_place) > MAX_PLACE_LENGTH:
         event_place = event_place[:MAX_PLACE_LENGTH] + "…"
 
@@ -195,17 +176,16 @@ def generate_ticket():
         return jsonify({"error": "Missing required field: name"}), 400
 
     try:
-        # -------- SINGLE TICKET --------
         if quantity == 1:
             ticket_no = generate_ticket_no()
 
             pdf = generate_ticket_with_placeholders(
-                full_name=full_name,
-                ticket_no=ticket_no,
-                event_date=EVENT_DATE,
-                ticket_price=TICKET_PRICE,
-                event_place=event_place,
-                event_time=EVENT_TIME,
+                full_name,
+                ticket_no,
+                EVENT_DATE,
+                TICKET_PRICE,
+                event_place,
+                EVENT_TIME,
             )
 
             return send_file(
@@ -215,7 +195,6 @@ def generate_ticket():
                 mimetype="application/pdf"
             )
 
-        # -------- MULTIPLE TICKETS (ZIP) --------
         zip_stream = io.BytesIO()
         with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_DEFLATED) as zf:
             for _ in range(quantity):
@@ -226,7 +205,7 @@ def generate_ticket():
                     ticket_no,
                     EVENT_DATE,
                     TICKET_PRICE,
-                    EVENT_PLACE,
+                    event_place,
                     EVENT_TIME,
                 )
 
