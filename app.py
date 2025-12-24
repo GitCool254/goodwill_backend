@@ -90,24 +90,22 @@ def generate_ticket_with_placeholders(
             fontname = "helv"
             fontsize = 12
 
-            # --- Measure actual text width ---
+            # --- Measure text width ---
             text_width = fitz.get_text_length(
                 text_str,
                 fontname=fontname,
                 fontsize=fontsize
             )
 
-            BASE_WIDTH = rect.width
+            base_width = rect.width
 
-            # --- RECTANGLE SIZE LOGIC ---
+            # --- Rectangle sizing logic ---
             if len(text_str) <= MAX_EXPAND_CHARS:
-                # Grow OR shrink naturally to text width
-                new_width = max(BASE_WIDTH, text_width + EXPAND_PADDING)
+                new_width = max(base_width, text_width + EXPAND_PADDING)
             else:
-                # Lock rectangle width at 25-character width
                 avg_char_width = text_width / max(len(text_str), 1)
                 locked_width = (avg_char_width * MAX_EXPAND_CHARS) + EXPAND_PADDING
-                new_width = max(BASE_WIDTH, locked_width)
+                new_width = max(base_width, locked_width)
 
             flex_rect = fitz.Rect(
                 rect.x0,
@@ -123,7 +121,7 @@ def generate_ticket_with_placeholders(
                 fill=(1, 1, 1)
             )
 
-            # --- Auto-shrink font if needed ---
+            # --- Auto-shrink font to fit ---
             while fontsize > 6 and fitz.get_text_length(
                 text_str,
                 fontname=fontname,
@@ -131,10 +129,10 @@ def generate_ticket_with_placeholders(
             ) > (flex_rect.width - 4):
                 fontsize -= 0.5
 
-            # --- Vertical centering ---
-            y_position = flex_rect.y0 + (flex_rect.height - fontsize) / 2
+            # --- CORRECT vertical centering (baseline-aware) ---
+            y_position = flex_rect.y0 + (flex_rect.height / 2) + (fontsize * 0.35)
 
-            # --- Draw text ---
+            # --- Draw text INSIDE rectangle ---
             page.insert_text(
                 (flex_rect.x0 + 2, y_position),
                 text_str,
