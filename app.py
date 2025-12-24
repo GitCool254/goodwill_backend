@@ -46,15 +46,16 @@ def generate_ticket_with_placeholders(
     event_time
 ):
     """
-    Replaces visible placeholders in the PDF with permanent bold text,
-    dynamically resizes boxes, and combines DATE+TIME if template allows.
+    Replaces visible placeholders in the PDF with permanent text.
+    White placeholder rectangles dynamically resize to text width.
     """
+
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Template not found: {TEMPLATE_PATH}")
 
     doc = fitz.open(TEMPLATE_PATH)
     page = doc[0]
-    page.wrap_contents()
+    page.wrap_contents()  # REQUIRED for design-exported PDFs
 
     replacements = {
         "{{NAME}}": full_name,
@@ -65,13 +66,13 @@ def generate_ticket_with_placeholders(
         "{{TIME}}": event_time,
     }
 
-    # Prepare combined DATE+TIME
     combined_placeholder = "{{DATE}} {{TIME}}"
-    combined_value = f"{replacements.get('{{DATE}}','')} {replacements.get('{{TIME}}','')}".strip()
+    combined_value = f"{event_date} {event_time}".strip()
 
     for placeholder, value in replacements.items():
-        # Check for combined placeholder first
-        if placeholder in ["{{DATE}}", "{{TIME}}"]:
+
+        # Handle combined DATE + TIME
+        if placeholder in ("{{DATE}}", "{{TIME}}"):
             matches = page.search_for(combined_placeholder)
             if matches:
                 placeholder = combined_placeholder
@@ -86,48 +87,58 @@ def generate_ticket_with_placeholders(
             continue
 
         for rect in matches:
-            # Clear placeholder area
-            page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-
-            # Dynamic text insertion with proper measurement
             text_str = str(value)
             fontname = "helv"
             fontsize = 12
-            font = fitz.Font(fontname=fontname)
 
-            # Measure text width and adjust flex rect
-            text_width = font.text_length(text_str, fontsize=fontsize)
+            # Measure text width
+            text_width = fitz.get_text_length(
+                text_str,
+                fontname=fontname,
+                fontsize=fontsize
+            )
+
+            # Expand white rectangle to fit text
             min_width = rect.width
             new_width = max(min_width, text_width + 6)
-            line_height = fontsize * 1.4
             flex_rect = fitz.Rect(
                 rect.x0,
                 rect.y0,
                 rect.x0 + new_width,
-                rect.y0 + line_height
+                rect.y1
             )
 
-            # Shrink font if text wider than rect
-            while text_width > flex_rect.width - 2 and fontsize > 6:
-                fontsize -= 0.5
-                text_width = font.text_length(text_str, fontsize=fontsize)
-
-            # Vertical centering
-            page.insert_textbox(
+            # Clear background
+            page.draw_rect(
                 flex_rect,
+                color=(1, 1, 1),
+                fill=(1, 1, 1)
+            )
+
+            # Reduce font if still too wide
+            while fontsize > 6 and fitz.get_text_length(
+                text_str,
+                fontname=fontname,
+                fontsize=fontsize
+            ) > flex_rect.width - 2:
+                fontsize -= 0.5
+
+            # Vertical centering (same logic as working generator)
+            y_position = flex_rect.y1 - ((flex_rect.height - fontsize) / 2)
+
+            # Draw text (ALWAYS visible)
+            page.insert_text(
+                (flex_rect.x0 + 2, y_position),
                 text_str,
                 fontsize=fontsize,
                 fontname=fontname,
-                color=(0, 0, 0),
-                align=fitz.TEXT_ALIGN_LEFT,
-                overlay=True
+                color=(0, 0, 0)
             )
 
     output = io.BytesIO()
     doc.save(output)
     doc.close()
     output.seek(0)
-
     return output
 
 # --------------------------------------------------
