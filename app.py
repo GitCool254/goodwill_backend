@@ -98,7 +98,13 @@ def generate_ticket_with_placeholders(
             text_width = font.text_length(text_str, fontsize=fontsize)
             min_width = rect.width
             new_width = max(min_width, text_width + 6)
-            flex_rect = fitz.Rect(rect.x0, rect.y0, rect.x0 + new_width, rect.y1)
+            line_height = fontsize * 1.4
+            flex_rect = fitz.Rect(
+                rect.x0,
+                rect.y0,
+                rect.x0 + new_width,
+                rect.y0 + line_height
+            )
 
             # Shrink font if text wider than rect
             while text_width > flex_rect.width - 2 and fontsize > 6:
