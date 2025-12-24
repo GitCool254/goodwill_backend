@@ -26,7 +26,7 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
 EVENT_DATE = "Dec 30, 2025"
 TICKET_PRICE = "5"
-EVENT_PLACE = "Nairobi"
+EVENT_PLACE = "District of Colombia, DC, United States"
 EVENT_TIME = "5PM"
 
 # --------------------------------------------------
