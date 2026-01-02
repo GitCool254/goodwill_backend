@@ -7,6 +7,7 @@ import zipfile
 import os
 import hmac
 import hashlib
+import requests
 
 
 # --------------------------------------------------
@@ -58,6 +59,46 @@ def verify_signature(payload: str, signature: str) -> bool:
     ).hexdigest()
 
     return hmac.compare_digest(expected, signature)
+
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID")
+PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET")
+PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "live")
+
+PAYPAL_API_BASE = (
+    "https://api-m.paypal.com"
+    if PAYPAL_MODE == "live"
+    else "https://api-m.sandbox.paypal.com"
+)
+
+USED_ORDERS = set()  # in-memory lock (OK for now)
+
+def verify_paypal_order(order_id, expected_amount):
+    auth = (PAYPAL_CLIENT_ID, PAYPAL_SECRET)
+
+    r = requests.get(
+        f"{PAYPAL_API_BASE}/v2/checkout/orders/{order_id}",
+        auth=auth,
+        headers={"Content-Type": "application/json"}
+    )
+
+    if r.status_code != 200:
+        return False, "PayPal verification failed"
+
+    order = r.json()
+
+    if order.get("status") != "COMPLETED":
+        return False, "Payment not completed"
+
+    paid_amount = order["purchase_units"][0]["amount"]["value"]
+
+    if paid_amount != f"{expected_amount:.2f}":
+        return False, "Amount mismatch"
+
+    if order_id in USED_ORDERS:
+        return False, "Order already used"
+
+    USED_ORDERS.add(order_id)
+    return True, None
 
 def generate_ticket_no():
     return f"GWS-{random.randint(100000, 999999)}"
@@ -188,13 +229,17 @@ def generate_ticket():
     except:
         return jsonify({"error": "Invalid quantity"}), 400
 
-    signature = request.headers.get("X-Signature", "")
+    order_id = data.get("order_id")
 
-    payload = f"{full_name}|{quantity}"
+    if not order_id:
+        return jsonify({"error": "Missing PayPal order ID"}), 400
 
-    if not verify_signature(payload, signature):
-        return jsonify({"error": "Invalid request signature"}), 403
-        
+    expected_amount = float(TICKET_PRICE) * quantity
+    ok, err = verify_paypal_order(order_id, expected_amount)
+
+    if not ok:
+        return jsonify({"error": err}), 403
+
     if len(full_name) > MAX_NAME_LENGTH:
         full_name = full_name[:MAX_NAME_LENGTH] + "…"
 
