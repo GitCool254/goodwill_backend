@@ -5,14 +5,23 @@ import io
 import random
 import zipfile
 import os
+import hmac
+import hashlib
+
 
 # --------------------------------------------------
 # APP SETUP
 # --------------------------------------------------
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
-
+CORS(
+    app,
+    resources={
+        r"/generate_ticket": {
+            "origins": ["https://goodwill-raffle-store-raffle-store.onrender.com"]
+        }
+    }
+)
 # --------------------------------------------------
 # PATHS
 # --------------------------------------------------
@@ -35,9 +44,20 @@ MAX_PLACE_LENGTH = 45
 MAX_EXPAND_CHARS = 25
 EXPAND_PADDING = 6
 
+SECRET_KEY = os.environ.get("API_SIGN_SECRET", "goodwill_5490_secret")
+
 # --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
+
+def verify_signature(payload: str, signature: str) -> bool:
+    expected = hmac.new(
+        SECRET_KEY.encode(),
+        payload.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature)
 
 def generate_ticket_no():
     return f"GWS-{random.randint(100000, 999999)}"
@@ -162,8 +182,19 @@ def generate_ticket():
 
     full_name = data.get("name", "").strip()
     event_place = data.get("event_place", EVENT_PLACE).strip()
-    quantity = int(data.get("quantity", 1))
 
+    try:
+        quantity = int(data.get("quantity", 1))
+    except:
+        return jsonify({"error": "Invalid quantity"}), 400
+
+    signature = request.headers.get("X-Signature", "")
+
+    payload = f"{full_name}|{quantity}"
+
+    if not verify_signature(payload, signature):
+        return jsonify({"error": "Invalid request signature"}), 403
+        
     if len(full_name) > MAX_NAME_LENGTH:
         full_name = full_name[:MAX_NAME_LENGTH] + "…"
 
