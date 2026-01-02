@@ -62,7 +62,7 @@ def verify_signature(payload: str, signature: str) -> bool:
 
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID")
 PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET")
-PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "live")
+PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox")
 
 PAYPAL_API_BASE = (
     "https://api-m.paypal.com"
