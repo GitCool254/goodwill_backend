@@ -1,5 +1,6 @@
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
+from decimal import Decimal, ROUND_HALF_UP
 import fitz  # PyMuPDF
 import io
 import random
@@ -93,10 +94,12 @@ def verify_paypal_order(order_id, expected_amount):
     if order.get("status") != "COMPLETED":
         return False, "Payment not completed"
 
-    paid_amount = order["purchase_units"][0]["amount"]["value"]
+    paid_amount = Decimal(
+        order["purchase_units"][0]["amount"]["value"]
+    ).quantize(Decimal("0.01"))
 
-    if paid_amount != f"{expected_amount:.2f}":
-        return False, "Amount mismatch"
+    if paid_amount != expected_amount:
+        return False, f"Amount mismatch (paid {paid_amount}, expected {expected_amount})"
 
     if order_id in USED_ORDERS:
         return False, "Order already used"
@@ -238,7 +241,9 @@ def generate_ticket():
     if not order_id:
         return jsonify({"error": "Missing PayPal order ID"}), 400
 
-    expected_amount = float(TICKET_PRICE) * quantity
+    expected_amount = (
+        Decimal(TICKET_PRICE) * Decimal(quantity)
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     ok, err = verify_paypal_order(order_id, expected_amount)
 
     if not ok:
