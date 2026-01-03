@@ -299,7 +299,7 @@ def generate_ticket():
 
                 zf.writestr(
                     f"RaffleTicket_{ticket_no}.pdf",
-                    pdf.read()
+                    pdf.getvalue()
                 )
 
         zip_stream.seek(0)
