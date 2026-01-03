@@ -81,6 +81,10 @@ def verify_paypal_order(order_id, expected_amount):
         headers={"Content-Type": "application/json"}
     )
 
+    print("🔎 PayPal URL:", f"{PAYPAL_API_BASE}/v2/checkout/orders/{order_id}")
+    print("🔎 Status code:", r.status_code)
+    print("🔎 Response:", r.text)
+
     if r.status_code != 200:
         return False, "PayPal verification failed"
 
