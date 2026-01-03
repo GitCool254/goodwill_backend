@@ -292,7 +292,7 @@ def generate_ticket():
                     full_name,
                     ticket_no,
                     EVENT_DATE,
-                    TICKET_PRICE,
+                    str(ticket_price),
                     event_place,
                     EVENT_TIME,
                 )
