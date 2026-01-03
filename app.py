@@ -36,7 +36,6 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 # --------------------------------------------------
 
 EVENT_DATE = "Dec 30, 2025"
-TICKET_PRICE = "5"
 EVENT_PLACE = "District of Colombia, DC, United States"
 EVENT_TIME = "5PM"
 
@@ -236,14 +235,21 @@ def generate_ticket():
     except:
         return jsonify({"error": "Invalid quantity"}), 400
 
+    ticket_price = data.get("ticket_price")
+
+    try:
+        ticket_price = Decimal(str(ticket_price)).quantize(Decimal("0.01"))
+    except:
+        return jsonify({"error": "Invalid ticket price"}), 400
+
     order_id = data.get("order_id")
 
     if not order_id:
         return jsonify({"error": "Missing PayPal order ID"}), 400
 
-    expected_amount = (
-        Decimal(TICKET_PRICE) * Decimal(quantity)
-    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    expected_amount = (ticket_price * Decimal(quantity)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
     ok, err = verify_paypal_order(order_id, expected_amount)
 
     if not ok:
@@ -265,7 +271,7 @@ def generate_ticket():
                 full_name,
                 ticket_no,
                 EVENT_DATE,
-                TICKET_PRICE,
+                str(ticket_price),
                 event_place,
                 EVENT_TIME,
             )
