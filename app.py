@@ -20,7 +20,7 @@ CORS(
     app,
     resources={
         r"/generate_ticket": {
-            "origins": ["https://goodwill-raffle-store-raffle-store.onrender.com"]
+            "origins": ["https://goodwill-raffle-store-raffle-store.onrender.com", "https://goodwillrafflestore.netlify.app"]
         }
     }
 )
