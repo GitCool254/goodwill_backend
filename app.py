@@ -276,17 +276,24 @@ def generate_ticket():
                 EVENT_TIME,
             )
 
-            return send_file(
+            response = send_file(
                 pdf,
                 as_attachment=True,
                 download_name=f"RaffleTicket_{ticket_no}.pdf",
                 mimetype="application/pdf"
             )
 
+            # ✅ SEND EXACT TICKET NUMBER TO FRONTEND
+            response.headers["X-Ticket-Numbers"] = ticket_no
+            return response
+
+        ticket_numbers = []
+
         zip_stream = io.BytesIO()
         with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_DEFLATED) as zf:
             for _ in range(quantity):
                 ticket_no = generate_ticket_no()
+                ticket_numbers.append(ticket_no)
 
                 pdf = generate_ticket_with_placeholders(
                     full_name,
@@ -304,12 +311,16 @@ def generate_ticket():
 
         zip_stream.seek(0)
 
-        return send_file(
+        response = send_file(
             zip_stream,
             as_attachment=True,
             download_name=f"RaffleTickets_{full_name.replace(' ', '_')}.zip",
             mimetype="application/zip"
         )
+
+        # ✅ SEND ALL GENERATED TICKET NUMBERS
+        response.headers["X-Ticket-Numbers"] = ",".join(ticket_numbers)
+        return response
 
     except Exception as e:
         print("❌ Ticket generation error:", e)
