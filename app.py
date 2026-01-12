@@ -72,6 +72,8 @@ PAYPAL_API_BASE = (
 
 USED_ORDERS = set()  # in-memory lock (OK for now)
 
+GENERATED_FILES = {}  # order_id -> { filename, mimetype, data }
+
 def verify_paypal_order(order_id, expected_amount):
     auth = (PAYPAL_CLIENT_ID, PAYPAL_SECRET)
 
@@ -283,6 +285,14 @@ def generate_ticket():
                 mimetype="application/pdf"
             )
 
+            # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
+            GENERATED_FILES[order_id] = {
+                "filename": f"RaffleTicket_{ticket_no}.pdf",
+                "mimetype": "application/pdf",
+                "data": pdf.getvalue()
+            }
+
+
             # ✅ SEND EXACT TICKET NUMBER TO FRONTEND
             response.headers["X-Ticket-Numbers"] = ticket_no
             return response
@@ -318,6 +328,13 @@ def generate_ticket():
             mimetype="application/zip"
         )
 
+        # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
+        GENERATED_FILES[order_id] = {
+            "filename": f"RaffleTickets_{full_name.replace(' ', '_')}.zip",
+            "mimetype": "application/zip",
+            "data": zip_stream.getvalue()
+        }
+
         # ✅ SEND ALL GENERATED TICKET NUMBERS
         response.headers["X-Ticket-Numbers"] = ",".join(ticket_numbers)
         return response
@@ -329,6 +346,26 @@ def generate_ticket():
 # --------------------------------------------------
 # MAIN
 # --------------------------------------------------
+
+@app.route("/redownload_ticket", methods=["POST"])
+def redownload_ticket():
+    data = request.get_json(force=True)
+    order_id = data.get("order_id")
+
+    if not order_id:
+        return jsonify({"error": "Missing order_id"}), 400
+
+    record = GENERATED_FILES.get(order_id)
+
+    if not record:
+        return jsonify({"error": "Ticket not found"}), 404
+
+    return send_file(
+        io.BytesIO(record["data"]),
+        as_attachment=True,
+        download_name=record["filename"],
+        mimetype=record["mimetype"]
+    )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
