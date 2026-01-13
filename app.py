@@ -42,6 +42,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
 # --------------------------------------------------
+# PERSISTENT TICKET STORAGE
+# --------------------------------------------------
+TICKET_STORAGE_DIR = os.environ.get(
+    "TICKET_STORAGE_DIR",
+    os.path.join(BASE_DIR, "data", "tickets")
+)
+
+os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
+
+MAX_REDOWNLOADS = 2
+
+# --------------------------------------------------
 # EVENT DATA
 # --------------------------------------------------
 
@@ -296,11 +308,14 @@ def generate_ticket():
             )
 
             # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
-            GENERATED_FILES[order_id] = {
-                "filename": f"RaffleTicket_{ticket_no}.pdf",
-                "mimetype": "application/pdf",
-                "data": pdf.getvalue()
-            }
+            # 🔐 STORE FILE TO DISK (persistent)
+            order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+            os.makedirs(order_dir, exist_ok=True)
+
+            file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
+
+            with open(file_path, "wb") as f:
+                f.write(pdf.getvalue())
 
 
             # ✅ SEND EXACT TICKET NUMBER TO FRONTEND
@@ -339,11 +354,17 @@ def generate_ticket():
         )
 
         # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
-        GENERATED_FILES[order_id] = {
-            "filename": f"RaffleTickets_{full_name.replace(' ', '_')}.zip",
-            "mimetype": "application/zip",
-            "data": zip_stream.getvalue()
-        }
+        # 🔐 STORE FILE TO DISK (persistent)
+        order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+        os.makedirs(order_dir, exist_ok=True)
+
+        zip_path = os.path.join(
+            order_dir,
+            f"RaffleTickets_{full_name.replace(' ', '_')}.zip"
+        )
+
+        with open(zip_path, "wb") as f:
+            f.write(zip_stream.getvalue())
 
         # ✅ SEND ALL GENERATED TICKET NUMBERS
         response.headers["X-Ticket-Numbers"] = ",".join(ticket_numbers)
@@ -365,16 +386,38 @@ def redownload_ticket():
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
 
-    record = GENERATED_FILES.get(order_id)
+    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
 
-    if not record:
+    if not os.path.exists(order_dir):
         return jsonify({"error": "Ticket not found"}), 404
 
+    files = os.listdir(order_dir)
+    if not files:
+        return jsonify({"error": "Ticket not found"}), 404
+
+    download_counter = os.path.join(order_dir, "downloads.txt")
+
+    # Read current count
+    if os.path.exists(download_counter):
+        with open(download_counter, "r") as f:
+            count = int(f.read().strip() or 0)
+    else:
+        count = 0
+
+    # Enforce limit
+    if count >= MAX_REDOWNLOADS:
+        return jsonify({"error": "Re-download limit reached"}), 403
+
+    # Increment count
+    with open(download_counter, "w") as f:
+        f.write(str(count + 1))
+
+    file_path = os.path.join(order_dir, files[0])
+
     return send_file(
-        io.BytesIO(record["data"]),
+        file_path,
         as_attachment=True,
-        download_name=record["filename"],
-        mimetype=record["mimetype"]
+        download_name=files[0]
     )
 
 if __name__ == "__main__":
