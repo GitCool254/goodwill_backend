@@ -46,7 +46,7 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 # --------------------------------------------------
 TICKET_STORAGE_DIR = os.environ.get(
     "TICKET_STORAGE_DIR",
-    os.path.join(BASE_DIR, "data", "tickets")
+    os.path.join(BASE_DIR, "storage", "tickets")
 )
 
 os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
