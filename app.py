@@ -213,12 +213,14 @@ def generate_ticket_with_placeholders(
             )
 
             # --- Auto-shrink font to fit ---
-            while fontsize > 6 and fitz.get_text_length(
-                text_str,
-                fontname=fontname,
-                fontsize=fontsize
-            ) > (flex_rect.width - 4):
-                fontsize -= 0.5
+            while fontsize > 6:
+                if fitz.get_text_length(
+                    text_str,
+                    fontname=fontname,
+                    fontsize=fontsize
+                ) <= (flex_rect.width - 4):
+                    break
+                fontsize -= 1
 
             # --- CORRECT vertical centering (baseline-aware) ---
             y_position = flex_rect.y0 + (flex_rect.height / 2) + (fontsize * 0.35)
@@ -307,25 +309,24 @@ def generate_ticket():
                 mimetype="application/pdf"
             )
 
-            # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
-            # 🔐 STORE FILE TO DISK (persistent)
+            response.headers["X-Ticket-Numbers"] = ticket_no
+
+            # 🔥 WRITE TO DISK AFTER response object is created
+            pdf_bytes = pdf.getvalue()
+
             order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
             os.makedirs(order_dir, exist_ok=True)
 
             file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
-
             with open(file_path, "wb") as f:
-                f.write(pdf.getvalue())
+                f.write(pdf_bytes)
 
-
-            # ✅ SEND EXACT TICKET NUMBER TO FRONTEND
-            response.headers["X-Ticket-Numbers"] = ticket_no
             return response
 
         ticket_numbers = []
 
         zip_stream = io.BytesIO()
-        with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_STORED) as zf:
             for _ in range(quantity):
                 ticket_no = generate_ticket_no()
                 ticket_numbers.append(ticket_no)
