@@ -40,14 +40,24 @@ CORS(
 # --------------------------------------------------
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = (
-        "https://b516ef86.goodwill-raffle-store-raffle-store.pages.dev"
-    )
+    origin = request.headers.get("Origin")
+
+    allowed_origins = [
+        "https://goodwill-raffle-store-raffle-store.onrender.com",
+        "https://goodwill-raffle-store-raffle-store.pages.dev",
+    ]
+
+    if origin and (
+        origin in allowed_origins or origin.endswith(".pages.dev")
+    ):
+        response.headers["Access-Control-Allow-Origin"] = origin
+
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     response.headers["Access-Control-Expose-Headers"] = (
         "X-Ticket-Numbers, Content-Disposition"
     )
+
     return response
 
 # --------------------------------------------------
