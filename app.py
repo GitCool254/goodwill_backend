@@ -35,30 +35,7 @@ CORS(
     }
 )
 
-# --------------------------------------------------
-# FORCE CORS HEADERS FOR FILE DOWNLOADS (Cloudflare fix)
-# --------------------------------------------------
-@app.after_request
-def add_cors_headers(response):
-    origin = request.headers.get("Origin")
 
-    allowed_origins = [
-        "https://goodwill-raffle-store-raffle-store.onrender.com",
-        "https://goodwill-raffle-store-raffle-store.pages.dev",
-    ]
-
-    if origin and (
-        origin in allowed_origins or origin.endswith(".pages.dev")
-    ):
-        response.headers["Access-Control-Allow-Origin"] = origin
-
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    response.headers["Access-Control-Expose-Headers"] = (
-        "X-Ticket-Numbers, Content-Disposition"
-    )
-
-    return response
 
 # --------------------------------------------------
 # PATHS
@@ -275,7 +252,7 @@ def health_check():
     return jsonify({"status": "Raffle API running"}), 200
 
 
-@app.route("/generate_ticket", methods=["POST", "OPTIONS"])
+@app.route("/generate_ticket", methods=["POST"])
 def generate_ticket():
     data = request.get_json(force=True)
 
@@ -405,7 +382,7 @@ def generate_ticket():
 # MAIN
 # --------------------------------------------------
 
-@app.route("/redownload_ticket", methods=["POST", "OPTIONS"])
+@app.route("/redownload_ticket", methods=["POST"])
 def redownload_ticket():
     data = request.get_json(force=True)
     order_id = data.get("order_id")
