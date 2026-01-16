@@ -306,7 +306,8 @@ def generate_ticket():
                 EVENT_TIME,
             )
 
-            pdf_bytes = pdf.getbuffer()
+            # 🔥 real bytes, not memoryview
+            pdf_bytes = pdf.getvalue()
 
             response = Response(
                 pdf_bytes,
@@ -316,7 +317,8 @@ def generate_ticket():
                     "Content-Length": str(len(pdf_bytes)),
                     "Cache-Control": "no-store",
                     "X-Content-Type-Options": "nosniff"
-                }
+                },
+                direct_passthrough=True
             )
 
             response.headers["X-Ticket-Numbers"] = ticket_no
