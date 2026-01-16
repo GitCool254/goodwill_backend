@@ -22,14 +22,14 @@ CORS(
         r"/generate_ticket": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
-                "https://b516ef86.goodwill-raffle-store-raffle-store.pages.dev"
+                "https://goodwill-raffle-store-raffle-store.vercel.app/"
             ],
             "expose_headers": ["X-Ticket-Numbers"]
         },
         r"/redownload_ticket": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
-                "https://b516ef86.goodwill-raffle-store-raffle-store.pages.dev"
+                "https://goodwill-raffle-store-raffle-store.vercel.app/"
             ]
         }
     }
