@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, Response
 from flask_cors import CORS
 from decimal import Decimal, ROUND_HALF_UP
 import fitz  # PyMuPDF
@@ -16,6 +16,7 @@ import requests
 # --------------------------------------------------
 
 app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 CORS(
     app,
     resources={
@@ -305,11 +306,17 @@ def generate_ticket():
                 EVENT_TIME,
             )
 
-            response = send_file(
-                pdf,
-                as_attachment=True,
-                download_name=f"RaffleTicket_{ticket_no}.pdf",
-                mimetype="application/pdf"
+            pdf_bytes = pdf.getbuffer()
+
+            response = Response(
+                pdf_bytes,
+                mimetype="application/pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="RaffleTicket_{ticket_no}.pdf"',
+                    "Content-Length": str(len(pdf_bytes)),
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff"
+                }
             )
 
             response.headers["X-Ticket-Numbers"] = ticket_no
@@ -350,11 +357,15 @@ def generate_ticket():
 
         zip_stream.seek(0)
 
-        response = send_file(
+        response = Response(
             zip_stream,
-            as_attachment=True,
-            download_name=f"RaffleTickets_{full_name.replace(' ', '_')}.zip",
-            mimetype="application/zip"
+            mimetype="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="RaffleTickets_{full_name.replace(" ", "_")}.zip"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff"
+            },
+            direct_passthrough=True
         )
 
         # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
