@@ -24,7 +24,7 @@ CORS(
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
-                "https://goodwill-raffle-store-raffle-store.vercel.app"
+                "https://goodwillrafflestores.vercel.app"
             ],
             "expose_headers": ["X-Ticket-Numbers"]
         },
@@ -32,7 +32,7 @@ CORS(
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
-                "https://goodwill-raffle-store-raffle-store.vercel.app"
+                "https://goodwillrafflestores.vercel.app"
             ]
         }
     }
