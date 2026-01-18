@@ -9,6 +9,7 @@ import os
 import hmac
 import hashlib
 import requests
+import json
 
 
 # --------------------------------------------------
@@ -334,6 +335,14 @@ def generate_ticket():
             file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
             with open(file_path, "wb") as f:
                 f.write(pdf_bytes)
+
+            meta_path = os.path.join(order_dir, "meta.json")
+            with open(meta_path, "w") as f:
+                json.dump({
+                    "email": data.get("email"),
+                    "order_id": order_id,
+                    "quantity": quantity
+                }, f)
 
             # 🔁 If frontend only wanted generation (no download yet)
             if generate_only:
