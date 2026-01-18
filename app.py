@@ -255,6 +255,10 @@ def health_check():
     return jsonify({"status": "Raffle API running"}), 200
 
 
+def order_already_generated(order_id):
+    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    return os.path.exists(order_dir) and os.listdir(order_dir)
+
 @app.route("/generate_ticket", methods=["POST"])
 def generate_ticket():
     data = request.get_json(force=True)
@@ -283,6 +287,19 @@ def generate_ticket():
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
     ok, err = verify_paypal_order(order_id, expected_amount)
+
+    # 🟢 OPTION B: If tickets already exist, just return them
+    existing_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    if os.path.exists(existing_dir):
+        files = os.listdir(existing_dir)
+        if files:
+            file_path = os.path.join(existing_dir, files[0])
+
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=files[0]
+            )
 
     if not ok:
         return jsonify({"error": err}), 403
