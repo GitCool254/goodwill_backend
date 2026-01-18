@@ -263,6 +263,9 @@ def order_already_generated(order_id):
 def generate_ticket():
     data = request.get_json(force=True)
 
+    # 🔑 Option B flag: generate ticket without forcing download
+    generate_only = data.get("generate_only", False)
+
     full_name = data.get("name", "").strip()
     event_place = data.get("event_place", EVENT_PLACE).strip()
 
@@ -289,17 +292,13 @@ def generate_ticket():
     ok, err = verify_paypal_order(order_id, expected_amount)
 
     # 🟢 OPTION B: If tickets already exist, just return them
-    existing_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-    if os.path.exists(existing_dir):
-        files = os.listdir(existing_dir)
-        if files:
-            file_path = os.path.join(existing_dir, files[0])
-
-            return send_file(
-                file_path,
-                as_attachment=True,
-                download_name=files[0]
-            )
+    # 🟢 OPTION B: If tickets already exist, DO NOT regenerate
+    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    if os.path.exists(order_dir) and os.listdir(order_dir):
+        return jsonify({
+            "status": "already_generated",
+            "order_id": order_id
+        }), 200
 
     if not ok:
         return jsonify({"error": err}), 403
@@ -327,6 +326,22 @@ def generate_ticket():
 
             # 🔥 real bytes, not memoryview
             pdf_bytes = pdf.getvalue()
+
+            # 🟢 OPTION B: persist ticket immediately after generation
+            order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+            os.makedirs(order_dir, exist_ok=True)
+
+            file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
+            with open(file_path, "wb") as f:
+                f.write(pdf_bytes)
+
+            # 🔁 If frontend only wanted generation (no download yet)
+            if generate_only:
+                return jsonify({
+                    "status": "generated",
+                    "order_id": order_id,
+                    "ticket_numbers": [ticket_no]
+                }), 201
 
             response = Response(
                 pdf_bytes,
