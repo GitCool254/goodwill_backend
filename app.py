@@ -54,13 +54,13 @@ TICKET_STORAGE_DIR = os.environ.get(
     os.path.join(BASE_DIR, "storage", "tickets")
 )
 
+os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
+
 ORDERS_DB = os.path.join(BASE_DIR, "storage", "orders.json")
 
 if not os.path.exists(ORDERS_DB):
     with open(ORDERS_DB, "w") as f:
         f.write("{}")
-
-os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
 
 
 MAX_REDOWNLOADS = 2
