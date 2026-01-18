@@ -259,6 +259,65 @@ def order_already_generated(order_id):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
     return os.path.exists(order_dir) and os.listdir(order_dir)
 
+@app.route("/prepare_ticket", methods=["POST"])
+def prepare_ticket():
+    data = request.get_json(force=True)
+
+    full_name = data.get("name", "").strip()
+    order_id = data.get("order_id")
+    quantity = int(data.get("quantity", 1))
+    ticket_price = Decimal(str(data.get("ticket_price"))).quantize(Decimal("0.01"))
+
+    if not order_id or not full_name:
+        return jsonify({"error": "Missing data"}), 400
+
+    # 🛑 If already generated, do nothing
+    if order_already_generated(order_id):
+        return jsonify({"status": "already_generated"}), 200
+
+    expected_amount = (ticket_price * Decimal(quantity)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+    ok, err = verify_paypal_order(order_id, expected_amount)
+    if not ok:
+        return jsonify({"error": err}), 403
+
+    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    os.makedirs(order_dir, exist_ok=True)
+
+    if quantity == 1:
+        ticket_no = generate_ticket_no()
+        pdf = generate_ticket_with_placeholders(
+            full_name,
+            ticket_no,
+            EVENT_DATE,
+            str(ticket_price),
+            EVENT_PLACE,
+            EVENT_TIME
+        )
+
+        with open(os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf"), "wb") as f:
+            f.write(pdf.getvalue())
+
+        return jsonify({"status": "generated"}), 201
+
+    zip_path = os.path.join(order_dir, "RaffleTickets.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+        for _ in range(quantity):
+            ticket_no = generate_ticket_no()
+            pdf = generate_ticket_with_placeholders(
+                full_name,
+                ticket_no,
+                EVENT_DATE,
+                str(ticket_price),
+                EVENT_PLACE,
+                EVENT_TIME
+            )
+            zf.writestr(f"RaffleTicket_{ticket_no}.pdf", pdf.getvalue())
+
+    return jsonify({"status": "generated"}), 201
+
 @app.route("/generate_ticket", methods=["POST"])
 def generate_ticket():
     data = request.get_json(force=True)
