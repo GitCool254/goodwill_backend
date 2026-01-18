@@ -38,7 +38,11 @@ CORS(
     }
 )
 
+ORDERS_DB = os.path.join(BASE_DIR, "storage", "orders.json")
 
+if not os.path.exists(ORDERS_DB):
+    with open(ORDERS_DB, "w") as f:
+        f.write("{}")
 
 # --------------------------------------------------
 # PATHS
@@ -138,6 +142,24 @@ def verify_paypal_order(order_id, expected_amount):
 
 def generate_ticket_no():
     return f"GWS-{random.randint(100000, 999999)}"
+
+def save_order(email, order_id, quantity):
+    with open(ORDERS_DB, "r") as f:
+        data = json.load(f)
+
+    email = email.lower().strip()
+
+    if email not in data:
+        data[email] = []
+
+    data[email].append({
+        "order_id": order_id,
+        "quantity": quantity,
+        "date": EVENT_DATE
+    })
+
+    with open(ORDERS_DB, "w") as f:
+        json.dump(data, f)
 
 
 def generate_ticket_with_placeholders(
@@ -259,6 +281,17 @@ def order_already_generated(order_id):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
     return os.path.exists(order_dir) and os.listdir(order_dir)
 
+@app.route("/orders_by_email", methods=["POST"])
+def orders_by_email():
+    data = request.get_json(force=True)
+    email = data.get("email", "").lower().strip()
+
+    with open(ORDERS_DB, "r") as f:
+        orders = json.load(f)
+
+    return jsonify(orders.get(email, []))
+ 
+
 @app.route("/prepare_ticket", methods=["POST"])
 def prepare_ticket():
     data = request.get_json(force=True)
@@ -273,6 +306,7 @@ def prepare_ticket():
 
     # 🛑 If already generated, do nothing
     if order_already_generated(order_id):
+        save_order(data.get("email"), order_id, quantity)
         return jsonify({"status": "already_generated"}), 200
 
     expected_amount = (ticket_price * Decimal(quantity)).quantize(
@@ -352,8 +386,10 @@ def generate_ticket():
     if os.path.exists(existing_dir):
         files = os.listdir(existing_dir)
         if files:
-            file_path = os.path.join(existing_dir, files[0])
+            # ✅ SAVE ORDER ↔ EMAIL LINK
+            save_order(data.get("email"), order_id, quantity)
 
+            file_path = os.path.join(existing_dir, files[0])
             return send_file(
                 file_path,
                 as_attachment=True,
@@ -411,6 +447,9 @@ def generate_ticket():
             with open(file_path, "wb") as f:
                 f.write(pdf_bytes)
 
+            # ✅ SAVE ORDER ↔ EMAIL LINK
+            save_order(data.get("email"), order_id, quantity)    
+
             return response
 
         ticket_numbers = []
@@ -460,6 +499,9 @@ def generate_ticket():
 
         with open(zip_path, "wb") as f:
             f.write(zip_stream.getvalue())
+
+        # ✅ SAVE ORDER ↔ EMAIL LINK
+        save_order(data.get("email"), order_id, quantity)
 
         # ✅ SEND ALL GENERATED TICKET NUMBERS
         response.headers["X-Ticket-Numbers"] = ",".join(ticket_numbers)
