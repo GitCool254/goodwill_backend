@@ -9,7 +9,6 @@ import os
 import hmac
 import hashlib
 import requests
-import json
 
 
 # --------------------------------------------------
@@ -57,12 +56,6 @@ TICKET_STORAGE_DIR = os.environ.get(
 )
 
 os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
-
-# --------------------------------------------------
-# EMAIL → ORDER INDEX (NEW)
-# --------------------------------------------------
-EMAIL_INDEX_DIR = os.path.join(BASE_DIR, "storage", "email_index")
-os.makedirs(EMAIL_INDEX_DIR, exist_ok=True)
 
 MAX_REDOWNLOADS = 2
 
@@ -253,29 +246,6 @@ def generate_ticket_with_placeholders(
     output.seek(0)
     return output
 
-
-def index_order_by_email(email, order_id):
-    if not email:
-        return
-
-    email_key = email.strip().lower()
-    path = os.path.join(EMAIL_INDEX_DIR, f"{email_key}.json")
-
-    records = []
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            records = json.load(f)
-
-    if not any(r["order_id"] == order_id for r in records):
-        records.append({
-            "order_id": order_id,
-            "date": datetime.utcnow().isoformat()
-        })
-
-    with open(path, "w") as f:
-        json.dump(records, f)
-
-
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
@@ -292,9 +262,6 @@ def order_already_generated(order_id):
 @app.route("/generate_ticket", methods=["POST"])
 def generate_ticket():
     data = request.get_json(force=True)
-
-    # 🔑 Option B flag: generate ticket without forcing download
-    generate_only = data.get("generate_only", False)
 
     full_name = data.get("name", "").strip()
     event_place = data.get("event_place", EVENT_PLACE).strip()
@@ -321,17 +288,18 @@ def generate_ticket():
     )
     ok, err = verify_paypal_order(order_id, expected_amount)
 
-    # 🟢 Index order by email (Option B persistence)
-    index_order_by_email(data.get("email", ""), order_id)
-
     # 🟢 OPTION B: If tickets already exist, just return them
-    # 🟢 OPTION B: If tickets already exist, DO NOT regenerate
-    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-    if os.path.exists(order_dir) and os.listdir(order_dir):
-        return jsonify({
-            "status": "already_generated",
-            "order_id": order_id
-        }), 200
+    existing_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    if os.path.exists(existing_dir):
+        files = os.listdir(existing_dir)
+        if files:
+            file_path = os.path.join(existing_dir, files[0])
+
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=files[0]
+            )
 
     if not ok:
         return jsonify({"error": err}), 403
@@ -359,30 +327,6 @@ def generate_ticket():
 
             # 🔥 real bytes, not memoryview
             pdf_bytes = pdf.getvalue()
-
-            # 🟢 OPTION B: persist ticket immediately after generation
-            order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-            os.makedirs(order_dir, exist_ok=True)
-
-            file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
-            with open(file_path, "wb") as f:
-                f.write(pdf_bytes)
-
-            meta_path = os.path.join(order_dir, "meta.json")
-            with open(meta_path, "w") as f:
-                json.dump({
-                    "email": data.get("email"),
-                    "order_id": order_id,
-                    "quantity": quantity
-                }, f)
-
-            # 🔁 If frontend only wanted generation (no download yet)
-            if generate_only:
-                return jsonify({
-                    "status": "generated",
-                    "order_id": order_id,
-                    "ticket_numbers": [ticket_no]
-                }), 201
 
             response = Response(
                 pdf_bytes,
@@ -511,24 +455,6 @@ def redownload_ticket():
         as_attachment=True,
         download_name=files[0]
     )
-
-
-    @app.route("/orders_by_email", methods=["POST"])
-    def orders_by_email():
-        data = request.get_json(force=True)
-        email = data.get("email", "").strip().lower()
-
-        if not email:
-            return jsonify([])
-
-        path = os.path.join(EMAIL_INDEX_DIR, f"{email}.json")
-
-        if not os.path.exists(path):
-            return jsonify([])
-
-        with open(path, "r") as f:
-            return jsonify(json.load(f))
-    
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
