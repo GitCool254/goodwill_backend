@@ -9,7 +9,7 @@ import os
 import hmac
 import hashlib
 import requests
-
+import json
 
 # --------------------------------------------------
 # APP SETUP
@@ -146,13 +146,20 @@ def generate_ticket_no():
     return f"GWS-{random.randint(100000, 999999)}"
 
 def save_order(email, order_id, quantity):
-    with open(ORDERS_DB, "r") as f:
-        data = json.load(f)
+    if not email:
+        return
 
     email = email.lower().strip()
 
+    with open(ORDERS_DB, "r") as f:
+        data = json.load(f)
+
     if email not in data:
         data[email] = []
+
+    # 🛑 prevent duplicates
+    if any(o["order_id"] == order_id for o in data[email]):
+        return
 
     data[email].append({
         "order_id": order_id,
