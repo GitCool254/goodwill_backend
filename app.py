@@ -306,16 +306,20 @@ def prepare_ticket():
     data = request.get_json(force=True)
 
     full_name = data.get("name", "").strip()
+    email = data.get("email", "").strip().lower()
     order_id = data.get("order_id")
     quantity = int(data.get("quantity", 1))
     ticket_price = Decimal(str(data.get("ticket_price"))).quantize(Decimal("0.01"))
+
+    if not email:
+        return jsonify({"error": "Missing email"}), 400
 
     if not order_id or not full_name:
         return jsonify({"error": "Missing data"}), 400
 
     # 🛑 If already generated, do nothing
     if order_already_generated(order_id):
-        save_order(data.get("email"), order_id, quantity)
+        save_order(email, order_id, quantity)
         return jsonify({"status": "already_generated"}), 200
 
     expected_amount = (ticket_price * Decimal(quantity)).quantize(
@@ -343,6 +347,8 @@ def prepare_ticket():
         with open(os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf"), "wb") as f:
             f.write(pdf.getvalue())
 
+        save_order(email, order_id, quantity)
+
         return jsonify({"status": "generated"}), 201
 
     zip_path = os.path.join(order_dir, "RaffleTickets.zip")
@@ -358,6 +364,8 @@ def prepare_ticket():
                 EVENT_TIME
             )
             zf.writestr(f"RaffleTicket_{ticket_no}.pdf", pdf.getvalue())
+
+    save_order(email, order_id, quantity)
 
     return jsonify({"status": "generated"}), 201
 
@@ -396,7 +404,7 @@ def generate_ticket():
         files = os.listdir(existing_dir)
         if files:
             # ✅ SAVE ORDER ↔ EMAIL LINK
-            save_order(data.get("email"), order_id, quantity)
+            save_order(email, order_id, quantity)
 
             file_path = os.path.join(existing_dir, files[0])
             return send_file(
@@ -457,7 +465,7 @@ def generate_ticket():
                 f.write(pdf_bytes)
 
             # ✅ SAVE ORDER ↔ EMAIL LINK
-            save_order(data.get("email"), order_id, quantity)    
+            save_order(email, order_id, quantity)    
 
             return response
 
@@ -510,7 +518,7 @@ def generate_ticket():
             f.write(zip_stream.getvalue())
 
         # ✅ SAVE ORDER ↔ EMAIL LINK
-        save_order(data.get("email"), order_id, quantity)
+        save_order(email, order_id, quantity)
 
         # ✅ SEND ALL GENERATED TICKET NUMBERS
         response.headers["X-Ticket-Numbers"] = ",".join(ticket_numbers)
