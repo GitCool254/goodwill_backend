@@ -366,165 +366,53 @@ def prepare_ticket():
 def generate_ticket():
     data = request.get_json(force=True)
 
-    full_name = data.get("name", "").strip()
-    event_place = data.get("event_place", EVENT_PLACE).strip()
-
-    try:
-        quantity = int(data.get("quantity", 1))
-    except:
-        return jsonify({"error": "Invalid quantity"}), 400
-
+    email = data.get("email", "").strip().lower()
+    order_id = data.get("order_id")
+    quantity = int(data.get("quantity", 1))
     ticket_price = data.get("ticket_price")
+
+    if not email:
+        return jsonify({"error": "Missing email"}), 400
+
+    if not order_id:
+        return jsonify({"error": "Missing PayPal order ID"}), 400
 
     try:
         ticket_price = Decimal(str(ticket_price)).quantize(Decimal("0.01"))
     except:
         return jsonify({"error": "Invalid ticket price"}), 400
 
-    email = data.get("email", "").strip().lower()
-
-    if not email:
-        return jsonify({"error": "Missing email"}), 400
-
-    order_id = data.get("order_id")
-
-    if not order_id:
-        return jsonify({"error": "Missing PayPal order ID"}), 400
-
     expected_amount = (ticket_price * Decimal(quantity)).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
+
+    # 1️⃣ Verify PayPal payment
     ok, err = verify_paypal_order(order_id, expected_amount)
-
-    # 🟢 OPTION B: If tickets already exist, just return them
-    existing_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-    if os.path.exists(existing_dir):
-        files = os.listdir(existing_dir)
-        if files:
-            # ✅ SAVE ORDER ↔ EMAIL LINK
-            save_order(email, order_id, quantity)
-
-            file_path = os.path.join(existing_dir, files[0])
-            return send_file(
-                file_path,
-                as_attachment=True,
-                download_name=files[0]
-            )
-
     if not ok:
         return jsonify({"error": err}), 403
 
-    if len(full_name) > MAX_NAME_LENGTH:
-        full_name = full_name[:MAX_NAME_LENGTH] + "…"
+    # 2️⃣ Look for already prepared tickets
+    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    if not os.path.exists(order_dir):
+        return jsonify({
+            "error": "Tickets not prepared",
+            "hint": "Call /prepare_ticket first"
+        }), 404
 
+    files = os.listdir(order_dir)
+    if not files:
+        return jsonify({"error": "Tickets not found"}), 404
 
+    # 3️⃣ Persist order ↔ email (idempotent)
+    save_order(email, order_id, quantity)
 
-    if not full_name:
-        return jsonify({"error": "Missing required field: name"}), 400
-
-    try:
-        if quantity == 1:
-            ticket_no = generate_ticket_no()
-
-            pdf = generate_ticket_with_placeholders(
-                full_name,
-                ticket_no,
-                EVENT_DATE,
-                str(ticket_price),
-                event_place,
-                EVENT_TIME,
-            )
-
-            # 🔥 real bytes, not memoryview
-            pdf_bytes = pdf.getvalue()
-
-            response = Response(
-                pdf_bytes,
-                mimetype="application/pdf",
-                headers={
-                    "Content-Disposition": f'attachment; filename="RaffleTicket_{ticket_no}.pdf"',
-                    "Content-Length": str(len(pdf_bytes)),
-                    "Cache-Control": "no-store",
-                    "X-Content-Type-Options": "nosniff"
-                },
-                direct_passthrough=True
-            )
-
-            response.headers["X-Ticket-Numbers"] = ticket_no
-
-            # 🔥 WRITE TO DISK AFTER response object is created
-            pdf_bytes = pdf.getvalue()
-
-            order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-            os.makedirs(order_dir, exist_ok=True)
-
-            file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
-            with open(file_path, "wb") as f:
-                f.write(pdf_bytes)
-
-            # ✅ SAVE ORDER ↔ EMAIL LINK
-            save_order(email, order_id, quantity)    
-
-            return response
-
-        ticket_numbers = []
-
-        zip_stream = io.BytesIO()
-        with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_STORED) as zf:
-            for _ in range(quantity):
-                ticket_no = generate_ticket_no()
-                ticket_numbers.append(ticket_no)
-
-                pdf = generate_ticket_with_placeholders(
-                    full_name,
-                    ticket_no,
-                    EVENT_DATE,
-                    str(ticket_price),
-                    event_place,
-                    EVENT_TIME,
-                )
-
-                zf.writestr(
-                    f"RaffleTicket_{ticket_no}.pdf",
-                    pdf.getvalue()
-                )
-
-        zip_stream.seek(0)
-
-        response = Response(
-            zip_stream,
-            mimetype="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="RaffleTickets_{full_name.replace(" ", "_")}.zip"',
-                "Cache-Control": "no-store",
-                "X-Content-Type-Options": "nosniff"
-            },
-            direct_passthrough=True
-        )
-
-        # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
-        # 🔐 STORE FILE TO DISK (persistent)
-        order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-        os.makedirs(order_dir, exist_ok=True)
-
-        zip_path = os.path.join(
-            order_dir,
-            f"RaffleTickets_{full_name.replace(' ', '_')}.zip"
-        )
-
-        with open(zip_path, "wb") as f:
-            f.write(zip_stream.getvalue())
-
-        # ✅ SAVE ORDER ↔ EMAIL LINK
-        save_order(email, order_id, quantity)
-
-        # ✅ SEND ALL GENERATED TICKET NUMBERS
-        response.headers["X-Ticket-Numbers"] = ",".join(ticket_numbers)
-        return response
-
-    except Exception as e:
-        print("❌ Ticket generation error:", e)
-        return jsonify({"error": "Ticket generation failed"}), 500
+    # 4️⃣ Download first file (PDF or ZIP)
+    file_path = os.path.join(order_dir, files[0])
+    return send_file(
+        file_path,
+        as_attachment=True,
+        download_name=files[0]
+    )
 
 # --------------------------------------------------
 # MAIN
