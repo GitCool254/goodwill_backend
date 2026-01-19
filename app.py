@@ -322,13 +322,6 @@ def prepare_ticket():
         save_order(email, order_id, quantity)
         return jsonify({"status": "already_generated"}), 200
 
-    expected_amount = (ticket_price * Decimal(quantity)).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-
-    ok, err = verify_paypal_order(order_id, expected_amount)
-    if not ok:
-        return jsonify({"error": err}), 403
 
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
     os.makedirs(order_dir, exist_ok=True)
@@ -387,6 +380,11 @@ def generate_ticket():
         ticket_price = Decimal(str(ticket_price)).quantize(Decimal("0.01"))
     except:
         return jsonify({"error": "Invalid ticket price"}), 400
+
+    email = data.get("email", "").strip().lower()
+
+    if not email:
+        return jsonify({"error": "Missing email"}), 400
 
     order_id = data.get("order_id")
 
