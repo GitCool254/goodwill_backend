@@ -26,10 +26,25 @@ CORS(
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillrafflestores.vercel.app"
+            ]
+        },
+        r"/download_ticket": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app"
             ],
-            "expose_headers": ["X-Ticket-Numbers"]
+            "expose_headers": ["Content-Disposition"]
         },
         r"/redownload_ticket": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app"
+            ],
+            "expose_headers": ["Content-Disposition"]
+        },
+        r"/my_tickets": {   # ✅ ADD THIS
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
@@ -271,6 +286,52 @@ def generate_ticket_with_placeholders(
     output.seek(0)
     return output
 
+def send_ticket_file(order_id, enforce_limit=False):
+    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+
+    if not os.path.exists(order_dir):
+        return jsonify({"error": "Ticket not found"}), 404
+
+    files = [f for f in os.listdir(order_dir) if not f.endswith(".txt")]
+    if not files:
+        return jsonify({"error": "Ticket not found"}), 404
+
+    # 🔒 Deterministic selection
+    zip_files = [f for f in files if f.lower().endswith(".zip")]
+    pdf_files = [f for f in files if f.lower().endswith(".pdf")]
+
+    if zip_files:
+        selected_file = zip_files[0]     # Multi-ticket case
+    elif pdf_files:
+        selected_file = pdf_files[0]     # Single-ticket case
+    else:
+        return jsonify({"error": "Unsupported ticket format"}), 404
+
+    if enforce_limit:
+        counter_path = os.path.join(order_dir, "downloads.txt")
+        count = 0
+
+        if os.path.exists(counter_path):
+            with open(counter_path, "r") as f:
+                count = int(f.read().strip() or 0)
+
+        if count >= MAX_REDOWNLOADS:
+            return jsonify({"error": "Re-download limit reached"}), 403
+
+        with open(counter_path, "w") as f:
+            f.write(str(count + 1))
+
+    file_path = os.path.join(order_dir, selected_file)
+
+    print("📦 Sending ticket file:", file_path)
+
+    return send_file(
+        file_path,
+        as_attachment=True,
+        download_name=selected_file
+    )
+
+
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
@@ -409,23 +470,7 @@ def download_ticket():
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
 
-    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-    if not os.path.exists(order_dir):
-        return jsonify({"error": "Ticket not found"}), 404
-
-    files = os.listdir(order_dir)
-    files = [f for f in files if not f.endswith(".txt")]
-
-    if not files:
-        return jsonify({"error": "Ticket not found"}), 404
-
-    file_path = os.path.join(order_dir, files[0])
-
-    return send_file(
-        file_path,
-        as_attachment=True,
-        download_name=files[0]
-    )
+    return send_ticket_file(order_id, enforce_limit=False)
 
 @app.route("/my_tickets", methods=["POST"])
 def my_tickets():
@@ -452,39 +497,7 @@ def redownload_ticket():
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
 
-    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-
-    if not os.path.exists(order_dir):
-        return jsonify({"error": "Ticket not found"}), 404
-
-    files = os.listdir(order_dir)
-    if not files:
-        return jsonify({"error": "Ticket not found"}), 404
-
-    download_counter = os.path.join(order_dir, "downloads.txt")
-
-    # Read current count
-    if os.path.exists(download_counter):
-        with open(download_counter, "r") as f:
-            count = int(f.read().strip() or 0)
-    else:
-        count = 0
-
-    # Enforce limit
-    if count >= MAX_REDOWNLOADS:
-        return jsonify({"error": "Re-download limit reached"}), 403
-
-    # Increment count
-    with open(download_counter, "w") as f:
-        f.write(str(count + 1))
-
-    file_path = os.path.join(order_dir, files[0])
-
-    return send_file(
-        file_path,
-        as_attachment=True,
-        download_name=files[0]
-    )
+    return send_ticket_file(order_id, enforce_limit=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
