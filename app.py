@@ -9,8 +9,7 @@ import os
 import hmac
 import hashlib
 import requests
-import json
-from datetime import datetime
+
 
 # --------------------------------------------------
 # APP SETUP
@@ -48,17 +47,6 @@ CORS(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
-# --------------------------------------------------
-# ORDER INDEX (EMAIL → ORDER IDS)
-# --------------------------------------------------
-
-ORDERS_DB = os.path.join(BASE_DIR, "storage", "orders.json")
-
-os.makedirs(os.path.dirname(ORDERS_DB), exist_ok=True)
-
-if not os.path.exists(ORDERS_DB):
-    with open(ORDERS_DB, "w") as f:
-        f.write("{}")
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
 # --------------------------------------------------
@@ -271,87 +259,61 @@ def order_already_generated(order_id):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
     return os.path.exists(order_dir) and os.listdir(order_dir)
 
-import json
-from datetime import datetime
+@app.route("/generate_ticket", methods=["POST"])
+def generate_ticket():
+    data = request.get_json(force=True)
 
-def load_orders():
-    with open(ORDERS_DB, "r") as f:
-        return json.load(f)
+    full_name = data.get("name", "").strip()
+    event_place = data.get("event_place", EVENT_PLACE).strip()
 
-def save_orders(data):
-    with open(ORDERS_DB, "w") as f:
-        json.dump(data, f, indent=2)
+    try:
+        quantity = int(data.get("quantity", 1))
+    except:
+        return jsonify({"error": "Invalid quantity"}), 400
 
-def save_order(email, order_id, quantity):
-    if not email:
-        return
+    ticket_price = data.get("ticket_price")
 
-    email = email.strip().lower()
-    orders = load_orders()
+    try:
+        ticket_price = Decimal(str(ticket_price)).quantize(Decimal("0.01"))
+    except:
+        return jsonify({"error": "Invalid ticket price"}), 400
 
-    if email not in orders:
-        orders[email] = []
+    order_id = data.get("order_id")
 
-    # 🚫 prevent duplicate order_id
-    if any(o["order_id"] == order_id for o in orders[email]):
-        return
+    if not order_id:
+        return jsonify({"error": "Missing PayPal order ID"}), 400
 
-    orders[email].append({
-        "order_id": order_id,
-        "quantity": quantity,
-        "created_at": datetime.utcnow().isoformat() + "Z"
-    })
-
-    save_orders(orders)
-
-def silently_generate_tickets(
-    *,
-    full_name,
-    quantity,
-    ticket_price,
-    event_place,
-    order_id
-):
-    save_order(
-        data.get("email"),
-        order_id,
-        quantity
+    expected_amount = (ticket_price * Decimal(quantity)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
     )
+    ok, err = verify_paypal_order(order_id, expected_amount)
 
-    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-    existing = [
-        f for f in os.listdir(order_dir)
-        if f.endswith(".pdf") or f.endswith(".zip")
-    ]
+    # 🟢 OPTION B: If tickets already exist, just return them
+    existing_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    if os.path.exists(existing_dir):
+        files = os.listdir(existing_dir)
+        if files:
+            file_path = os.path.join(existing_dir, files[0])
 
-    if existing:
-        return
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=files[0]
+            )
 
-    if quantity == 1:
-        ticket_no = generate_ticket_no()
+    if not ok:
+        return jsonify({"error": err}), 403
 
-        pdf = generate_ticket_with_placeholders(
-            full_name,
-            ticket_no,
-            EVENT_DATE,
-            str(ticket_price),
-            event_place,
-            EVENT_TIME
-        )
+    if len(full_name) > MAX_NAME_LENGTH:
+        full_name = full_name[:MAX_NAME_LENGTH] + "…"
 
-        file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
-        with open(file_path, "wb") as f:
-            f.write(pdf.getvalue())
 
-        return
 
-    zip_path = os.path.join(
-        order_dir,
-        f"RaffleTickets_{full_name.replace(' ', '_')}.zip"
-    )
+    if not full_name:
+        return jsonify({"error": "Missing required field: name"}), 400
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
-        for _ in range(quantity):
+    try:
+        if quantity == 1:
             ticket_no = generate_ticket_no()
 
             pdf = generate_ticket_with_placeholders(
@@ -360,69 +322,97 @@ def silently_generate_tickets(
                 EVENT_DATE,
                 str(ticket_price),
                 event_place,
-                EVENT_TIME
+                EVENT_TIME,
             )
 
-            zf.writestr(f"RaffleTicket_{ticket_no}.pdf", pdf.getvalue())
+            # 🔥 real bytes, not memoryview
+            pdf_bytes = pdf.getvalue()
 
-@app.route("/generate_ticket", methods=["POST"])
-def generate_ticket():
-    data = request.get_json(force=True)
+            response = Response(
+                pdf_bytes,
+                mimetype="application/pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="RaffleTicket_{ticket_no}.pdf"',
+                    "Content-Length": str(len(pdf_bytes)),
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff"
+                },
+                direct_passthrough=True
+            )
 
-    full_name = data.get("name", "").strip()
-    event_place = data.get("event_place", EVENT_PLACE).strip()
-    order_id = data.get("order_id")
+            response.headers["X-Ticket-Numbers"] = ticket_no
 
-    try:
-        quantity = int(data.get("quantity", 1))
-        ticket_price = Decimal(str(data.get("ticket_price"))).quantize(
-            Decimal("0.01")
+            # 🔥 WRITE TO DISK AFTER response object is created
+            pdf_bytes = pdf.getvalue()
+
+            order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+            os.makedirs(order_dir, exist_ok=True)
+
+            file_path = os.path.join(order_dir, f"RaffleTicket_{ticket_no}.pdf")
+            with open(file_path, "wb") as f:
+                f.write(pdf_bytes)
+
+            return response
+
+        ticket_numbers = []
+
+        zip_stream = io.BytesIO()
+        with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_STORED) as zf:
+            for _ in range(quantity):
+                ticket_no = generate_ticket_no()
+                ticket_numbers.append(ticket_no)
+
+                pdf = generate_ticket_with_placeholders(
+                    full_name,
+                    ticket_no,
+                    EVENT_DATE,
+                    str(ticket_price),
+                    event_place,
+                    EVENT_TIME,
+                )
+
+                zf.writestr(
+                    f"RaffleTicket_{ticket_no}.pdf",
+                    pdf.getvalue()
+                )
+
+        zip_stream.seek(0)
+
+        response = Response(
+            zip_stream,
+            mimetype="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="RaffleTickets_{full_name.replace(" ", "_")}.zip"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff"
+            },
+            direct_passthrough=True
         )
-    except:
-        return jsonify({"error": "Invalid input"}), 400
 
-    if not order_id or not full_name:
-        return jsonify({"error": "Missing required fields"}), 400
+        # 🔐 STORE FILE FOR RE-DOWNLOAD (Option A)
+        # 🔐 STORE FILE TO DISK (persistent)
+        order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+        os.makedirs(order_dir, exist_ok=True)
 
-    expected_amount = (ticket_price * quantity).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
+        zip_path = os.path.join(
+            order_dir,
+            f"RaffleTickets_{full_name.replace(' ', '_')}.zip"
+        )
 
-    ok, err = verify_paypal_order(order_id, expected_amount)
-    if not ok:
-        return jsonify({"error": err}), 403
+        with open(zip_path, "wb") as f:
+            f.write(zip_stream.getvalue())
 
-    # 🔥 SILENT GENERATION ONLY
-    silently_generate_tickets(
-        full_name=full_name,
-        quantity=quantity,
-        ticket_price=ticket_price,
-        event_place=event_place,
-        order_id=order_id
-    )
+        # ✅ SEND ALL GENERATED TICKET NUMBERS
+        response.headers["X-Ticket-Numbers"] = ",".join(ticket_numbers)
+        return response
 
-    return jsonify({
-        "status": "ok",
-        "message": "Tickets generated and stored"
-    }), 200
+    except Exception as e:
+        print("❌ Ticket generation error:", e)
+        return jsonify({"error": "Ticket generation failed"}), 500
 
 # --------------------------------------------------
 # MAIN
 # --------------------------------------------------
-
-@app.route("/orders_by_email", methods=["POST"])
-def orders_by_email():
-    data = request.get_json(force=True)
-    email = data.get("email", "").strip().lower()
-
-    if not email:
-        return jsonify({"error": "Missing email"}), 400
-
-    orders = load_orders()
-    return jsonify({
-        "email": email,
-        "orders": orders.get(email, [])
-    }), 200
 
 @app.route("/redownload_ticket", methods=["POST"])
 def redownload_ticket():
