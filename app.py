@@ -9,7 +9,8 @@ import os
 import hmac
 import hashlib
 import requests
-
+import json
+from datetime import datetime
 
 # --------------------------------------------------
 # APP SETUP
@@ -47,6 +48,17 @@ CORS(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
+# --------------------------------------------------
+# ORDER INDEX (EMAIL → ORDER IDS)
+# --------------------------------------------------
+
+ORDERS_DB = os.path.join(BASE_DIR, "storage", "orders.json")
+
+os.makedirs(os.path.dirname(ORDERS_DB), exist_ok=True)
+
+if not os.path.exists(ORDERS_DB):
+    with open(ORDERS_DB, "w") as f:
+        f.write("{}")
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
 # --------------------------------------------------
@@ -259,6 +271,39 @@ def order_already_generated(order_id):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
     return os.path.exists(order_dir) and os.listdir(order_dir)
 
+import json
+from datetime import datetime
+
+def load_orders():
+    with open(ORDERS_DB, "r") as f:
+        return json.load(f)
+
+def save_orders(data):
+    with open(ORDERS_DB, "w") as f:
+        json.dump(data, f, indent=2)
+
+def save_order(email, order_id, quantity):
+    if not email:
+        return
+
+    email = email.strip().lower()
+    orders = load_orders()
+
+    if email not in orders:
+        orders[email] = []
+
+    # 🚫 prevent duplicate order_id
+    if any(o["order_id"] == order_id for o in orders[email]):
+        return
+
+    orders[email].append({
+        "order_id": order_id,
+        "quantity": quantity,
+        "created_at": datetime.utcnow().isoformat() + "Z"
+    })
+
+    save_orders(orders)
+
 def silently_generate_tickets(
     *,
     full_name,
@@ -267,11 +312,19 @@ def silently_generate_tickets(
     event_place,
     order_id
 ):
-    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-    os.makedirs(order_dir, exist_ok=True)
+    save_order(
+        data.get("email"),
+        order_id,
+        quantity
+    )
 
-    # 🚫 Guard: never generate twice
-    if os.listdir(order_dir):
+    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+    existing = [
+        f for f in os.listdir(order_dir)
+        if f.endswith(".pdf") or f.endswith(".zip")
+    ]
+
+    if existing:
         return
 
     if quantity == 1:
@@ -292,7 +345,10 @@ def silently_generate_tickets(
 
         return
 
-    zip_path = os.path.join(order_dir, "RaffleTickets.zip")
+    zip_path = os.path.join(
+        order_dir,
+        f"RaffleTickets_{full_name.replace(' ', '_')}.zip"
+    )
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
         for _ in range(quantity):
@@ -319,18 +375,16 @@ def generate_ticket():
 
     try:
         quantity = int(data.get("quantity", 1))
+        ticket_price = Decimal(str(data.get("ticket_price"))).quantize(
+            Decimal("0.01")
+        )
     except:
-        return jsonify({"error": "Invalid quantity"}), 400
+        return jsonify({"error": "Invalid input"}), 400
 
-    try:
-        ticket_price = Decimal(str(data.get("ticket_price"))).quantize(Decimal("0.01"))
-    except:
-        return jsonify({"error": "Invalid ticket price"}), 400
+    if not order_id or not full_name:
+        return jsonify({"error": "Missing required fields"}), 400
 
-    if not order_id:
-        return jsonify({"error": "Missing PayPal order ID"}), 400
-
-    expected_amount = (ticket_price * Decimal(quantity)).quantize(
+    expected_amount = (ticket_price * quantity).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
 
@@ -338,7 +392,7 @@ def generate_ticket():
     if not ok:
         return jsonify({"error": err}), 403
 
-    # 🔥 SILENT GENERATION (only if missing)
+    # 🔥 SILENT GENERATION ONLY
     silently_generate_tickets(
         full_name=full_name,
         quantity=quantity,
@@ -347,24 +401,28 @@ def generate_ticket():
         order_id=order_id
     )
 
-    # ✅ RETURN STORED FILE
-    order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
-    files = os.listdir(order_dir)
-
-    if not files:
-        return jsonify({"error": "Ticket not found"}), 404
-
-    file_path = os.path.join(order_dir, files[0])
-
-    return send_file(
-        file_path,
-        as_attachment=True,
-        download_name=files[0]
-    )
+    return jsonify({
+        "status": "ok",
+        "message": "Tickets generated and stored"
+    }), 200
 
 # --------------------------------------------------
 # MAIN
 # --------------------------------------------------
+
+@app.route("/orders_by_email", methods=["POST"])
+def orders_by_email():
+    data = request.get_json(force=True)
+    email = data.get("email", "").strip().lower()
+
+    if not email:
+        return jsonify({"error": "Missing email"}), 400
+
+    orders = load_orders()
+    return jsonify({
+        "email": email,
+        "orders": orders.get(email, [])
+    }), 200
 
 @app.route("/redownload_ticket", methods=["POST"])
 def redownload_ticket():
