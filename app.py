@@ -109,13 +109,25 @@ def save_orders_index(data):
         json.dump(data, f, indent=2)
 
 
-def register_order(order_id, email, files):
+def register_order(
+    order_id,
+    email,
+    files,
+    product,
+    quantity,
+    ticket_numbers
+):
     index = load_orders_index()
+
     index["orders"][order_id] = {
         "email": email,
         "files": files,
+        "product": product,
+        "quantity": quantity,
+        "tickets": ticket_numbers,  # list of ticket numbers
         "created_at": datetime.utcnow().isoformat() + "Z"
     }
+
     save_orders_index(index)
 
 
@@ -413,7 +425,14 @@ def generate_ticket():
             with open(file_path, "wb") as f:
                 f.write(pdf.getvalue())
 
-            register_order(order_id, email, [file_name])
+            register_order(
+                order_id=order_id,
+                email=email,
+                files=[file_name],
+                product=data.get("product", "Raffle Ticket"),
+                quantity=1,
+                ticket_numbers=[ticket_no]
+            )
 
             return jsonify({
                 "status": "tickets_generated",
@@ -422,6 +441,7 @@ def generate_ticket():
 
 
         ticket_files = []
+        ticket_numbers = []
 
         order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
         os.makedirs(order_dir, exist_ok=True)
@@ -430,7 +450,8 @@ def generate_ticket():
         with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_STORED) as zf:
             for _ in range(quantity):
                 ticket_no = generate_ticket_no()
-
+                ticket_numbers.append(ticket_no)
+                
                 pdf = generate_ticket_with_placeholders(
                     full_name,
                     ticket_no,
@@ -448,7 +469,14 @@ def generate_ticket():
         with open(zip_path, "wb") as f:
             f.write(zip_stream.getvalue())
 
-        register_order(order_id, email, [os.path.basename(zip_path)])
+        register_order(
+            order_id=order_id,
+            email=email,
+            files=[os.path.basename(zip_path)],
+            product=data.get("product", "Raffle Ticket"),
+            quantity=quantity,
+            ticket_numbers=ticket_numbers
+        )
 
         return jsonify({
             "status": "tickets_generated",
@@ -482,7 +510,13 @@ def my_tickets():
 
     index = load_orders_index()
     orders = [
-        {"order_id": oid}
+        {
+            "order_id": oid,
+            "product": meta.get("product"),
+            "quantity": meta.get("quantity"),
+            "tickets": meta.get("tickets", []),
+            "date": meta.get("created_at")
+        }
         for oid, meta in index["orders"].items()
         if meta["email"] == email
     ]
