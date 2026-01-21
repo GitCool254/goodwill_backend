@@ -378,6 +378,12 @@ def generate_ticket():
 
     email = data.get("email", "").strip().lower()
 
+    product_title = (
+        data.get("product_title")
+        or data.get("product")
+        or "Raffle Ticket"
+    )
+
     if not email:
         return jsonify({"error": "Missing email"}), 400
 
@@ -429,7 +435,7 @@ def generate_ticket():
                 order_id=order_id,
                 email=email,
                 files=[file_name],
-                product=data.get("product", "Raffle Ticket"),
+                product=product_title,
                 quantity=1,
                 ticket_numbers=[ticket_no]
             )
@@ -473,7 +479,7 @@ def generate_ticket():
             order_id=order_id,
             email=email,
             files=[os.path.basename(zip_path)],
-            product=data.get("product", "Raffle Ticket"),
+            product=product_title,
             quantity=quantity,
             ticket_numbers=ticket_numbers
         )
