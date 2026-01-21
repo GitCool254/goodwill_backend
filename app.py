@@ -305,6 +305,18 @@ def send_ticket_file(order_id, enforce_limit=False):
     if not os.path.exists(order_dir):
         return jsonify({"error": "Ticket not found"}), 404
 
+    # ⚡ FAST PATH: single-ticket in-memory download
+    cached = GENERATED_FILES.get(order_id)
+    if cached and cached["filename"].lower().endswith(".pdf"):
+        return Response(
+            cached["data"],
+            mimetype=cached["mimetype"],
+            headers={
+                "Content-Disposition": f'attachment; filename="{cached["filename"]}"',
+                "Content-Length": str(len(cached["data"]))
+            }
+        )
+
     files = [f for f in os.listdir(order_dir) if not f.endswith(".txt")]
     if not files:
         return jsonify({"error": "Ticket not found"}), 404
@@ -433,8 +445,17 @@ def generate_ticket():
             file_name = f"RaffleTicket_{ticket_no}.pdf"
             file_path = os.path.join(order_dir, file_name)
 
+            pdf_bytes = pdf.getvalue()
+
             with open(file_path, "wb") as f:
-                f.write(pdf.getvalue())
+                f.write(pdf_bytes)
+
+            # 🚀 Cache for fast download
+            GENERATED_FILES[order_id] = {
+                "filename": file_name,
+                "mimetype": "application/pdf",
+                "data": pdf_bytes
+            }
 
             register_order(
                 order_id=order_id,
