@@ -518,7 +518,7 @@ def my_tickets():
     orders = [
         {
             "order_id": oid,
-            "product": meta.get("product"),
+            "product_name": meta.get("product"),
             "quantity": meta.get("quantity"),
             "tickets": meta.get("tickets", []),
             "date": meta.get("created_at")
