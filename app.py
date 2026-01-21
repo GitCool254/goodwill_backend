@@ -11,6 +11,7 @@ import hashlib
 import requests
 import json
 from datetime import datetime
+from werkzeug.wsgi import FileWrapper
 
 # --------------------------------------------------
 # APP SETUP
@@ -337,10 +338,14 @@ def send_ticket_file(order_id, enforce_limit=False):
 
     print("📦 Sending ticket file:", file_path)
 
-    return send_file(
-        file_path,
-        as_attachment=True,
-        download_name=selected_file
+    return Response(
+        FileWrapper(open(file_path, "rb")),
+        mimetype="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{selected_file}"',
+            "Content-Length": os.path.getsize(file_path)
+        },
+        direct_passthrough=True
     )
 
 
@@ -453,7 +458,12 @@ def generate_ticket():
         os.makedirs(order_dir, exist_ok=True)
 
         zip_stream = io.BytesIO()
-        with zipfile.ZipFile(zip_stream, "w", zipfile.ZIP_STORED) as zf:
+        with zipfile.ZipFile(
+            zip_stream,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=6
+        ) as zf:
             for _ in range(quantity):
                 ticket_no = generate_ticket_no()
                 ticket_numbers.append(ticket_no)
