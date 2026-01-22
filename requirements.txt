@@ -1,3 +1,4 @@
+-c constraints.txt
 beautifulsoup4==4.14.2
 blinker==1.9.0
 Brotli==1.1.0
@@ -60,8 +61,3 @@ zopfli==0.2.3.post1
 PyMuPDF==1.22.5
 boto3==1.34.0
 supabase==2.3.1
-gotrue==2.9.0
-postgrest==0.13.2
-storage3==0.7.7
-realtime==1.0.6
-httpx==0.25.2

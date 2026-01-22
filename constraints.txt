@@ -1,0 +1,11 @@
+# Supabase ecosystem (LOCKED)
+supabase==2.3.1
+gotrue==2.9.0
+postgrest==0.13.2
+storage3==0.7.7
+realtime==1.0.6
+httpx==0.25.2
+
+# pydantic compatible with Python 3.13 + Supabase
+pydantic==2.12.5
+pydantic-core==2.41.5
