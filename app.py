@@ -63,7 +63,9 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
-# --------------------------------------------------                   TICKET_STORAGE_DIR = os.environ.get(
+# -------------------------------------------------- 
+
+TICKET_STORAGE_DIR = os.environ.get(
     "TICKET_STORAGE_DIR",
     os.path.join(BASE_DIR, "storage", "tickets")
 )
