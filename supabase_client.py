@@ -1,13 +1,12 @@
-from supabase import create_client, Client
 import os
+from supabase import create_client, Client
 
-# Get environment variables
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# Fail fast if missing
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Supabase URL or Service Role Key is not set in environment variables!")
+supabase: Client | None = None
 
-# Create Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    print("⚠️ Supabase not initialized: missing environment variables")
