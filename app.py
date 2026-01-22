@@ -332,7 +332,8 @@ def send_ticket_file(order_id, enforce_limit=False):
     if enforce_limit:
         counter_path = os.path.join(order_dir, "downloads.txt")
         count = 0
-                                                                               if os.path.exists(counter_path):
+
+        if os.path.exists(counter_path):
             with open(counter_path, "r") as f:
                 count = int(f.read().strip() or 0)
 
