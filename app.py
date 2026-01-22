@@ -232,7 +232,8 @@ def generate_ticket_with_placeholders(
 
         if not matches:
             continue
-                                                                               for rect in matches:
+
+        for rect in matches:
             text_str = str(value)
             fontname = "helv"
             fontsize = 12
