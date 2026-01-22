@@ -16,7 +16,8 @@ from werkzeug.wsgi import FileWrapper
 # --------------------------------------------------                   # APP SETUP
 # --------------------------------------------------
 
-app = Flask(__name__)                                                  app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 CORS(
     app,
     resources={
