@@ -12,6 +12,7 @@ import requests
 import json
 from datetime import datetime
 from werkzeug.wsgi import FileWrapper
+from supabase_client import supabase
 
 # --------------------------------------------------
 # APP SETUP
@@ -118,18 +119,32 @@ def register_order(
     quantity,
     ticket_numbers
 ):
+    # --- JSON storage (existing) ---
     index = load_orders_index()
-
     index["orders"][order_id] = {
         "email": email,
         "files": files,
         "product": product,
         "quantity": quantity,
-        "tickets": ticket_numbers,  # list of ticket numbers
+        "tickets": ticket_numbers,
         "created_at": datetime.utcnow().isoformat() + "Z"
     }
-
     save_orders_index(index)
+
+    # --- Supabase storage (new) ---
+    try:
+        data = {
+            "order_id": order_id,
+            "email": email,
+            "files": files,
+            "product": product,
+            "quantity": quantity,
+            "tickets": ticket_numbers,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        supabase.table("orders").insert(data).execute()
+    except Exception as e:
+        print("❌ Supabase insert error:", e)
 
 
 def verify_signature(payload: str, signature: str) -> bool:
@@ -414,14 +429,11 @@ def generate_ticket():
     )
     ok, err = verify_paypal_order(order_id, expected_amount)
 
-
     if not ok:
         return jsonify({"error": err}), 403
 
     if len(full_name) > MAX_NAME_LENGTH:
         full_name = full_name[:MAX_NAME_LENGTH] + "…"
-
-
 
     if not full_name:
         return jsonify({"error": "Missing required field: name"}), 400
@@ -457,6 +469,22 @@ def generate_ticket():
                 "data": pdf_bytes
             }
 
+            # --- NEW: Save metadata to Supabase ---
+            order_data = {
+                "order_id": order_id,
+                "email": email,
+                "files": [file_name],
+                "product": product_title,
+                "quantity": 1,
+                "tickets": [ticket_no],
+                "created_at": datetime.utcnow().isoformat() + "Z"
+            }
+            try:
+                supabase.table("orders").insert(order_data).execute()
+            except Exception as e:
+                print("❌ Supabase insert error:", e)
+
+            # --- JSON backup ---
             register_order(
                 order_id=order_id,
                 email=email,
@@ -470,7 +498,6 @@ def generate_ticket():
                 "status": "tickets_generated",
                 "order_id": order_id
             }), 200
-
 
         ticket_files = []
         ticket_numbers = []
@@ -488,7 +515,7 @@ def generate_ticket():
             for _ in range(quantity):
                 ticket_no = generate_ticket_no()
                 ticket_numbers.append(ticket_no)
-                
+
                 pdf = generate_ticket_with_placeholders(
                     full_name,
                     ticket_no,
@@ -506,6 +533,22 @@ def generate_ticket():
         with open(zip_path, "wb") as f:
             f.write(zip_stream.getvalue())
 
+        # --- NEW: Save metadata to Supabase ---
+        order_data = {
+            "order_id": order_id,
+            "email": email,
+            "files": [os.path.basename(zip_path)],
+            "product": product_title,
+            "quantity": quantity,
+            "tickets": ticket_numbers,
+            "created_at": datetime.utcnow().isoformat() + "Z"
+        }
+        try:
+            supabase.table("orders").insert(order_data).execute()
+        except Exception as e:
+            print("❌ Supabase insert error:", e)
+
+        # --- JSON backup ---
         register_order(
             order_id=order_id,
             email=email,
@@ -545,18 +588,38 @@ def my_tickets():
     if not email:
         return jsonify({"error": "Missing email"}), 400
 
-    index = load_orders_index()
-    orders = [
-        {
-            "order_id": oid,
-            "product_name": meta.get("product"),
-            "quantity": meta.get("quantity"),
-            "tickets": meta.get("tickets", []),
-            "date": meta.get("created_at")
-        }
-        for oid, meta in index["orders"].items()
-        if meta["email"] == email
-    ]
+    orders = []
+
+    # ----- 1️⃣ Try fetching from Supabase -----
+    try:
+        response = supabase.table("orders").select("*").eq("email", email).execute()
+        if response.data:
+            for row in response.data:
+                orders.append({
+                    "order_id": row.get("order_id"),
+                    "product_name": row.get("product"),
+                    "quantity": row.get("quantity"),
+                    "tickets": row.get("tickets", []),
+                    "date": row.get("created_at")
+                })
+    except Exception as e:
+        print("⚠️ Supabase fetch failed:", e)
+
+    # ----- 2️⃣ Fallback to local JSON backup -----
+    if not orders:
+        try:
+            index = load_orders_index()
+            for oid, meta in index.get("orders", {}).items():
+                if meta.get("email") == email:
+                    orders.append({
+                        "order_id": oid,
+                        "product_name": meta.get("product"),
+                        "quantity": meta.get("quantity"),
+                        "tickets": meta.get("tickets", []),
+                        "date": meta.get("created_at")
+                    })
+        except Exception as e:
+            print("⚠️ Local JSON fetch failed:", e)
 
     return jsonify({"orders": orders}), 200
 
