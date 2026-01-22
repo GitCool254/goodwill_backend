@@ -12,14 +12,11 @@ import requests
 import json
 from datetime import datetime
 from werkzeug.wsgi import FileWrapper
-from supabase_client import supabase
 
-# --------------------------------------------------
-# APP SETUP
+# --------------------------------------------------                   # APP SETUP
 # --------------------------------------------------
 
-app = Flask(__name__)
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+app = Flask(__name__)                                                  app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 CORS(
     app,
     resources={
@@ -44,8 +41,7 @@ CORS(
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillrafflestores.vercel.app"
             ],
-            "expose_headers": ["Content-Disposition"]
-        },
+            "expose_headers": ["Content-Disposition"]                          },
         r"/my_tickets": {   # ✅ ADD THIS
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
@@ -67,8 +63,7 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
-# --------------------------------------------------
-TICKET_STORAGE_DIR = os.environ.get(
+# --------------------------------------------------                   TICKET_STORAGE_DIR = os.environ.get(
     "TICKET_STORAGE_DIR",
     os.path.join(BASE_DIR, "storage", "tickets")
 )
@@ -119,39 +114,24 @@ def register_order(
     quantity,
     ticket_numbers
 ):
-    # --- JSON storage (existing) ---
     index = load_orders_index()
+
     index["orders"][order_id] = {
         "email": email,
         "files": files,
         "product": product,
         "quantity": quantity,
-        "tickets": ticket_numbers,
+        "tickets": ticket_numbers,  # list of ticket numbers
         "created_at": datetime.utcnow().isoformat() + "Z"
     }
-    save_orders_index(index)
 
-    # --- Supabase storage (new) ---
-    try:
-        data = {
-            "order_id": order_id,
-            "email": email,
-            "files": files,
-            "product": product,
-            "quantity": quantity,
-            "tickets": ticket_numbers,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        supabase.table("orders").insert(data).execute()
-    except Exception as e:
-        print("❌ Supabase insert error:", e)
+    save_orders_index(index)
 
 
 def verify_signature(payload: str, signature: str) -> bool:
     expected = hmac.new(
         SECRET_KEY.encode(),
-        payload.encode(),
-        hashlib.sha256
+        payload.encode(),                                                      hashlib.sha256
     ).hexdigest()
 
     return hmac.compare_digest(expected, signature)
@@ -230,8 +210,7 @@ def generate_ticket_with_placeholders(
         "{{EVENT_PLACE}}": event_place,
         "{{DATE}}": event_date,
         "{{TIME}}": event_time,
-    }
-
+    }                                                                  
     combined_placeholder = "{{DATE}} {{TIME}}"
     combined_value = f"{event_date} {event_time}".strip()
 
@@ -249,8 +228,7 @@ def generate_ticket_with_placeholders(
 
         if not matches:
             continue
-
-        for rect in matches:
+                                                                               for rect in matches:
             text_str = str(value)
             fontname = "helv"
             fontsize = 12
@@ -342,16 +320,14 @@ def send_ticket_file(order_id, enforce_limit=False):
 
     if zip_files:
         selected_file = zip_files[0]     # Multi-ticket case
-    elif pdf_files:
-        selected_file = pdf_files[0]     # Single-ticket case
+    elif pdf_files:                                                            selected_file = pdf_files[0]     # Single-ticket case
     else:
         return jsonify({"error": "Unsupported ticket format"}), 404
 
     if enforce_limit:
         counter_path = os.path.join(order_dir, "downloads.txt")
         count = 0
-
-        if os.path.exists(counter_path):
+                                                                               if os.path.exists(counter_path):
             with open(counter_path, "r") as f:
                 count = int(f.read().strip() or 0)
 
@@ -359,8 +335,7 @@ def send_ticket_file(order_id, enforce_limit=False):
             return jsonify({"error": "Re-download limit reached"}), 403
 
         with open(counter_path, "w") as f:
-            f.write(str(count + 1))
-
+            f.write(str(count + 1))                                    
     file_path = os.path.join(order_dir, selected_file)
 
     print("📦 Sending ticket file:", file_path)
@@ -368,8 +343,7 @@ def send_ticket_file(order_id, enforce_limit=False):
     return Response(
         FileWrapper(open(file_path, "rb")),
         mimetype="application/octet-stream",
-        headers={
-            "Content-Disposition": f'attachment; filename="{selected_file}"',
+        headers={                                                                  "Content-Disposition": f'attachment; filename="{selected_file}"',
             "Content-Length": os.path.getsize(file_path)
         },
         direct_passthrough=True
@@ -429,11 +403,14 @@ def generate_ticket():
     )
     ok, err = verify_paypal_order(order_id, expected_amount)
 
+
     if not ok:
         return jsonify({"error": err}), 403
 
     if len(full_name) > MAX_NAME_LENGTH:
         full_name = full_name[:MAX_NAME_LENGTH] + "…"
+
+
 
     if not full_name:
         return jsonify({"error": "Missing required field: name"}), 400
@@ -469,22 +446,6 @@ def generate_ticket():
                 "data": pdf_bytes
             }
 
-            # --- NEW: Save metadata to Supabase ---
-            order_data = {
-                "order_id": order_id,
-                "email": email,
-                "files": [file_name],
-                "product": product_title,
-                "quantity": 1,
-                "tickets": [ticket_no],
-                "created_at": datetime.utcnow().isoformat() + "Z"
-            }
-            try:
-                supabase.table("orders").insert(order_data).execute()
-            except Exception as e:
-                print("❌ Supabase insert error:", e)
-
-            # --- JSON backup ---
             register_order(
                 order_id=order_id,
                 email=email,
@@ -497,7 +458,7 @@ def generate_ticket():
             return jsonify({
                 "status": "tickets_generated",
                 "order_id": order_id
-            }), 200
+            }), 200                                                    
 
         ticket_files = []
         ticket_numbers = []
@@ -514,8 +475,7 @@ def generate_ticket():
         ) as zf:
             for _ in range(quantity):
                 ticket_no = generate_ticket_no()
-                ticket_numbers.append(ticket_no)
-
+                ticket_numbers.append(ticket_no)                       
                 pdf = generate_ticket_with_placeholders(
                     full_name,
                     ticket_no,
@@ -533,22 +493,6 @@ def generate_ticket():
         with open(zip_path, "wb") as f:
             f.write(zip_stream.getvalue())
 
-        # --- NEW: Save metadata to Supabase ---
-        order_data = {
-            "order_id": order_id,
-            "email": email,
-            "files": [os.path.basename(zip_path)],
-            "product": product_title,
-            "quantity": quantity,
-            "tickets": ticket_numbers,
-            "created_at": datetime.utcnow().isoformat() + "Z"
-        }
-        try:
-            supabase.table("orders").insert(order_data).execute()
-        except Exception as e:
-            print("❌ Supabase insert error:", e)
-
-        # --- JSON backup ---
         register_order(
             order_id=order_id,
             email=email,
@@ -588,44 +532,22 @@ def my_tickets():
     if not email:
         return jsonify({"error": "Missing email"}), 400
 
-    orders = []
-
-    # ----- 1️⃣ Try fetching from Supabase -----
-    try:
-        response = supabase.table("orders").select("*").eq("email", email).execute()
-        if response.data:
-            for row in response.data:
-                orders.append({
-                    "order_id": row.get("order_id"),
-                    "product_name": row.get("product"),
-                    "quantity": row.get("quantity"),
-                    "tickets": row.get("tickets", []),
-                    "date": row.get("created_at")
-                })
-    except Exception as e:
-        print("⚠️ Supabase fetch failed:", e)
-
-    # ----- 2️⃣ Fallback to local JSON backup -----
-    if not orders:
-        try:
-            index = load_orders_index()
-            for oid, meta in index.get("orders", {}).items():
-                if meta.get("email") == email:
-                    orders.append({
-                        "order_id": oid,
-                        "product_name": meta.get("product"),
-                        "quantity": meta.get("quantity"),
-                        "tickets": meta.get("tickets", []),
-                        "date": meta.get("created_at")
-                    })
-        except Exception as e:
-            print("⚠️ Local JSON fetch failed:", e)
-
-    return jsonify({"orders": orders}), 200
+    index = load_orders_index()
+    orders = [
+        {
+            "order_id": oid,
+            "product_name": meta.get("product"),
+            "quantity": meta.get("quantity"),
+            "tickets": meta.get("tickets", []),
+            "date": meta.get("created_at")
+        }
+        for oid, meta in index["orders"].items()
+        if meta["email"] == email
+    ]
+                                                                           return jsonify({"orders": orders}), 200
 
 @app.route("/redownload_ticket", methods=["POST"])
-def redownload_ticket():
-    data = request.get_json(force=True)
+def redownload_ticket():                                                   data = request.get_json(force=True)
     order_id = data.get("order_id")
 
     if not order_id:
