@@ -552,7 +552,8 @@ def my_tickets():
         for oid, meta in index["orders"].items()
         if meta["email"] == email
     ]
-                                                                           return jsonify({"orders": orders}), 200
+
+    return jsonify({"orders": orders}), 200
 
 @app.route("/redownload_ticket", methods=["POST"])
 def redownload_ticket():                                                   data = request.get_json(force=True)
