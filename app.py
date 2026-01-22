@@ -213,7 +213,8 @@ def generate_ticket_with_placeholders(
         "{{EVENT_PLACE}}": event_place,
         "{{DATE}}": event_date,
         "{{TIME}}": event_time,
-    }                                                                  
+    }
+
     combined_placeholder = "{{DATE}} {{TIME}}"
     combined_value = f"{event_date} {event_time}".strip()
 
@@ -338,7 +339,8 @@ def send_ticket_file(order_id, enforce_limit=False):
             return jsonify({"error": "Re-download limit reached"}), 403
 
         with open(counter_path, "w") as f:
-            f.write(str(count + 1))                                    
+            f.write(str(count + 1))
+
     file_path = os.path.join(order_dir, selected_file)
 
     print("📦 Sending ticket file:", file_path)
@@ -461,7 +463,8 @@ def generate_ticket():
             return jsonify({
                 "status": "tickets_generated",
                 "order_id": order_id
-            }), 200                                                    
+            }), 200
+
 
         ticket_files = []
         ticket_numbers = []
@@ -478,7 +481,7 @@ def generate_ticket():
         ) as zf:
             for _ in range(quantity):
                 ticket_no = generate_ticket_no()
-                ticket_numbers.append(ticket_no)                       
+                ticket_numbers.append(ticket_no)
                 pdf = generate_ticket_with_placeholders(
                     full_name,
                     ticket_no,
