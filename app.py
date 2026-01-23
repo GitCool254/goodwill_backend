@@ -302,11 +302,12 @@ def send_ticket_file(order_id, enforce_limit=False):
     if cached and cached["filename"].lower().endswith(".pdf"):
         return Response(
             cached["data"],
-            mimetype=cached["mimetype"],
+            mimetype="application/pdf",
             headers={
                 "Content-Disposition": f'attachment; filename="{cached["filename"]}"',
                 "Content-Length": str(len(cached["data"])),
             },
+            direct_passthrough=True,   # 🚀 ZERO-COPY
         )
 
     files = [f for f in os.listdir(order_dir) if not f.endswith(".txt")]
