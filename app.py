@@ -283,6 +283,13 @@ def generate_ticket_with_placeholders(
     output.seek(0)
     return output
 
+def stream_file(path, chunk_size=8192):
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 def send_ticket_file(order_id, enforce_limit=False):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
@@ -336,13 +343,12 @@ def send_ticket_file(order_id, enforce_limit=False):
     print("📦 Sending ticket file:", file_path)
 
     return Response(
-        FileWrapper(open(file_path, "rb")),
-        mimetype="application/octet-stream",
+        stream_file(file_path),
+        mimetype="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{selected_file}"',
             "Content-Length": os.path.getsize(file_path),
         },
-        direct_passthrough=True,
     )
 
 
@@ -478,6 +484,8 @@ def generate_ticket():
                 name = f"RaffleTicket_{ticket_no}.pdf"
                 zf.writestr(name, pdf.getvalue())
                 ticket_files.append(name)
+
+        zip_stream.seek(0)
 
         zip_path = os.path.join(order_dir, f"RaffleTickets_{order_id}.zip")
         with open(zip_path, "wb") as f:
