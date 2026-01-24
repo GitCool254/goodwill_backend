@@ -118,6 +118,40 @@ if all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
         region_name="auto",
     )
 
+# Step 2R
+def upload_zip_to_r2(order_id: str, zip_bytes: bytes):
+    """
+    Best-effort upload.
+    Failure here must NEVER affect ticket delivery.
+    """
+    if not r2_client:
+        return
+
+    try:
+        r2_client.put_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=f"tickets/{order_id}.zip",
+            Body=zip_bytes,
+            ContentType="application/zip"
+        )
+    except Exception as e:
+        # Silent fail — log only
+        print("R2 upload failed:", e)
+
+def fetch_zip_from_r2(order_id):
+    if not r2_client:
+        return None
+
+    try:
+        obj = r2_client.get_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=f"tickets/{order_id}.zip"
+        )
+        return obj["Body"].read()
+    except Exception as e:
+        print("R2 fetch failed:", e)
+        return None
+
 def load_orders_index():
     if not os.path.exists(ORDERS_INDEX_FILE):
         return {"orders": {}}
@@ -315,8 +349,21 @@ def stream_file(path, chunk_size=8192):
 def send_ticket_file(order_id, enforce_limit=False):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
 
+    # 🔹 STEP 4: Local-first, R2 fallback
     if not os.path.exists(order_dir):
-        return jsonify({"error": "Ticket not found"}), 404
+
+        # Attempt R2 recovery
+        zip_bytes = fetch_zip_from_r2(order_id)
+
+        if not zip_bytes:
+            return jsonify({"error": "Ticket not found"}), 404
+
+        # Restore locally from R2
+        os.makedirs(order_dir, exist_ok=True)
+
+        zip_path = os.path.join(order_dir, f"RaffleTickets_{order_id}.zip")
+        with open(zip_path, "wb") as f:
+            f.write(zip_bytes)
 
     # ⚡ FAST PATH: single-ticket in-memory download
     cached = GENERATED_FILES.get(order_id)
@@ -506,6 +553,13 @@ def generate_ticket():
                 name = f"RaffleTicket_{ticket_no}.pdf"
                 zf.writestr(name, pdf.getvalue())
                 ticket_files.append(name)
+
+        zip_stream.seek(0)
+
+        # 🔹 ADD Step3 R
+
+        zip_bytes = zip_stream.getvalue()
+        upload_zip_to_r2(order_id, zip_bytes)
 
         zip_stream.seek(0)
 
