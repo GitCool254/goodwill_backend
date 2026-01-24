@@ -178,6 +178,22 @@ def register_order(order_id, email, files, product, quantity, ticket_numbers):
 
     save_orders_index(index)
 
+def cleanup_old_orders(days=7):
+    cutoff = datetime.utcnow().timestamp() - (days * 86400)
+
+    for order_id in os.listdir(TICKET_STORAGE_DIR):
+        order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+
+        if not os.path.isdir(order_dir):
+            continue
+
+        try:
+            if os.path.getmtime(order_dir) < cutoff:
+                for f in os.listdir(order_dir):
+                    os.remove(os.path.join(order_dir, f))
+                os.rmdir(order_dir)
+        except Exception as e:
+            print("Cleanup error:", e)
 
 def verify_signature(payload: str, signature: str) -> bool:
     expected = hmac.new(
@@ -200,7 +216,7 @@ PAYPAL_API_BASE = (
 USED_ORDERS = set()  # in-memory lock (OK for now)
 
 GENERATED_FILES = {}  # order_id -> { filename, mimetype, data }
-
+MAX_CACHE_ITEMS = 100
 
 def verify_paypal_order(order_id, expected_amount):
     auth = (PAYPAL_CLIENT_ID, PAYPAL_SECRET)
@@ -209,6 +225,7 @@ def verify_paypal_order(order_id, expected_amount):
         f"{PAYPAL_API_BASE}/v2/checkout/orders/{order_id}",
         auth=auth,
         headers={"Content-Type": "application/json"},
+        timeout=10
     )
 
     print("🔎 PayPal URL:", f"{PAYPAL_API_BASE}/v2/checkout/orders/{order_id}")
@@ -352,13 +369,17 @@ def send_ticket_file(order_id, enforce_limit=False):
     # 🔹 STEP 4: Local-first, R2 fallback
     if not os.path.exists(order_dir):
 
-        # Attempt R2 recovery
+        # Attempt R2 recovery (ZIP orders only)
         zip_bytes = fetch_zip_from_r2(order_id)
 
         if not zip_bytes:
             return jsonify({"error": "Ticket not found"}), 404
 
-        # Restore locally from R2
+        # Basic integrity check (ZIP magic header)
+        if not zip_bytes.startswith(b"PK"):
+            print("❌ R2 data is not a valid ZIP")
+            return jsonify({"error": "Corrupt ticket archive"}), 500
+
         os.makedirs(order_dir, exist_ok=True)
 
         zip_path = os.path.join(order_dir, f"RaffleTickets_{order_id}.zip")
@@ -428,7 +449,12 @@ def send_ticket_file(order_id, enforce_limit=False):
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return jsonify({"status": "Raffle API running"}), 200
+    return jsonify({
+        "status": "ok",
+        "service": "raffle-api",
+        "version": "1.0.0",
+        "time": datetime.utcnow().isoformat() + "Z"
+    }), 200
 
 
 def order_already_generated(order_id):
@@ -514,6 +540,9 @@ def generate_ticket():
                 "data": pdf_bytes,
             }
 
+            if len(GENERATED_FILES) > MAX_CACHE_ITEMS:
+                GENERATED_FILES.pop(next(iter(GENERATED_FILES)))
+
             register_order(
                 order_id=order_id,
                 email=email,
@@ -522,6 +551,8 @@ def generate_ticket():
                 quantity=1,
                 ticket_numbers=[ticket_no],
             )
+
+            cleanup_old_orders()
 
             return (
                 jsonify({"status": "tickets_generated", "order_id": order_id}),
@@ -575,6 +606,8 @@ def generate_ticket():
             quantity=quantity,
             ticket_numbers=ticket_numbers,
         )
+
+        cleanup_old_orders()
 
         return (
             jsonify({"status": "tickets_generated", "order_id": order_id}),
