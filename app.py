@@ -202,6 +202,34 @@ def verify_signature(payload: str, signature: str) -> bool:
 
     return hmac.compare_digest(expected, signature)
 
+def verify_request_hmac(req):
+    """
+    Enforces HMAC signature on JSON requests.
+    Does NOT affect file streaming speed.
+    """
+    signature = req.headers.get("X-Signature")
+    timestamp = req.headers.get("X-Timestamp")
+
+    if not signature or not timestamp:
+        return False, "Missing signature headers"
+
+    # Optional: anti-replay window (5 minutes)
+    try:
+        ts = int(timestamp)
+        now = int(datetime.utcnow().timestamp())
+        if abs(now - ts) > 300:
+            return False, "Request expired"
+    except Exception:
+        return False, "Invalid timestamp"
+
+    raw_body = req.get_data(as_text=True) or ""
+
+    payload = f"{timestamp}.{raw_body}"
+
+    if not verify_signature(payload, signature):
+        return False, "Invalid signature"
+
+    return True, None
 
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID")
 PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET")
@@ -464,6 +492,10 @@ def order_already_generated(order_id):
 
 @app.route("/generate_ticket", methods=["POST"])
 def generate_ticket():
+    ok, err = verify_request_hmac(request)
+    if not ok:
+        return jsonify({"error": err}), 403
+
     data = request.get_json(force=True)
 
     full_name = data.get("name", "").strip()
@@ -626,6 +658,10 @@ def generate_ticket():
 
 @app.route("/download_ticket", methods=["POST"])
 def download_ticket():
+    ok, err = verify_request_hmac(request)
+    if not ok:
+        return jsonify({"error": err}), 403
+
     data = request.get_json(force=True)
     order_id = data.get("order_id")
 
@@ -637,6 +673,10 @@ def download_ticket():
 
 @app.route("/my_tickets", methods=["POST"])
 def my_tickets():
+    ok, err = verify_request_hmac(request)
+    if not ok:
+        return jsonify({"error": err}), 403
+
     data = request.get_json(force=True)
     email = data.get("email", "").strip().lower()
 
@@ -661,6 +701,10 @@ def my_tickets():
 
 @app.route("/redownload_ticket", methods=["POST"])
 def redownload_ticket():
+    ok, err = verify_request_hmac(request)
+    if not ok:
+        return jsonify({"error": err}), 403
+
     data = request.get_json(force=True)
     order_id = data.get("order_id")
 
