@@ -205,15 +205,15 @@ def verify_signature(payload: str, signature: str) -> bool:
 def verify_request_hmac(req):
     """
     Enforces HMAC signature on JSON requests.
-    Does NOT affect file streaming speed.
+    Works behind proxies too.
     """
-    signature = req.headers.get("X-Signature")
-    timestamp = req.headers.get("X-Timestamp")
+    # fallback to proxy-prefixed headers
+    signature = req.headers.get("X-Signature") or req.headers.get("HTTP_X_SIGNATURE")
+    timestamp = req.headers.get("X-Timestamp") or req.headers.get("HTTP_X_TIMESTAMP")
 
     if not signature or not timestamp:
         return False, "Missing signature headers"
 
-    # Optional: anti-replay window (5 minutes)
     try:
         ts = int(timestamp)
         now = int(datetime.utcnow().timestamp())
@@ -223,7 +223,6 @@ def verify_request_hmac(req):
         return False, "Invalid timestamp"
 
     raw_body = req.get_data(as_text=True) or ""
-
     payload = f"{timestamp}.{raw_body}"
 
     if not verify_signature(payload, signature):
