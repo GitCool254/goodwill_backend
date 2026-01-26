@@ -152,6 +152,9 @@ if all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
         region_name="auto",
     )
 
+def record_ticket_sale(quantity: int):
+    add_sold_tickets(quantity)
+
 # Step 2R
 def upload_zip_to_r2(order_id: str, zip_bytes: bytes):
     """
@@ -647,6 +650,8 @@ def generate_ticket():
                 ticket_numbers=[ticket_no],
             )
 
+            record_ticket_sale(1)
+
             cleanup_old_orders()
 
             return (
@@ -701,6 +706,8 @@ def generate_ticket():
             quantity=quantity,
             ticket_numbers=ticket_numbers,
         )
+
+        record_ticket_sale(quantity)
 
         cleanup_old_orders()
 
