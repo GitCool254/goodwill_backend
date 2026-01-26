@@ -16,39 +16,6 @@ import boto3
 from botocore.client import Config
 
 # --------------------------------------------------
-# TICKET SALES LEDGER (ADDITIVE – DO NOT MODIFY)
-# --------------------------------------------------
-
-SALES_FILE = os.path.join(BASE_DIR, "ticket_sales.json")
-
-def read_sales():
-    """
-    Returns total tickets sold (persistent).
-    Safe fallback to 0.
-    """
-    if not os.path.exists(SALES_FILE):
-        return 0
-    try:
-        with open(SALES_FILE, "r") as f:
-            return int(json.load(f).get("sold", 0))
-    except Exception:
-        return 0
-
-
-def write_sales(total_sold):
-    """
-    Persist total tickets sold.
-    """
-    with open(SALES_FILE, "w") as f:
-        json.dump(
-            {
-                "sold": int(total_sold),
-                "updated_at": datetime.utcnow().isoformat() + "Z",
-            },
-            f,
-            indent=2,
-        )
-# --------------------------------------------------
 # APP SETUP
 # --------------------------------------------------
 
@@ -97,6 +64,40 @@ CORS(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
+
+# --------------------------------------------------
+# TICKET SALES LEDGER (ADDITIVE – DO NOT MODIFY)
+# --------------------------------------------------
+
+SALES_FILE = os.path.join(BASE_DIR, "ticket_sales.json")
+
+def read_sales():
+    """
+    Returns total tickets sold (persistent).
+    Safe fallback to 0.
+    """
+    if not os.path.exists(SALES_FILE):
+        return 0
+    try:
+        with open(SALES_FILE, "r") as f:
+            return int(json.load(f).get("sold", 0))
+    except Exception:
+        return 0
+
+
+def write_sales(total_sold):
+    """
+    Persist total tickets sold.
+    """
+    with open(SALES_FILE, "w") as f:
+        json.dump(
+            {
+                "sold": int(total_sold),
+                "updated_at": datetime.utcnow().isoformat() + "Z",
+            },
+            f,
+            indent=2,
+        )
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
 # --------------------------------------------------
