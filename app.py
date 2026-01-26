@@ -98,6 +98,37 @@ def write_sales(total_sold):
             f,
             indent=2,
         )
+
+# --------------------------------------------------
+# AUTHORITATIVE TICKET STATE (DO NOT RESET HISTORY)
+# --------------------------------------------------
+
+STATE_FILE = os.path.join(BASE_DIR, "ticket_state.json")
+
+def load_ticket_state():
+    """
+    Persistent authoritative remaining ticket state.
+    Never touches sales history.
+    """
+    if not os.path.exists(STATE_FILE):
+        return {
+            "remaining": None,
+            "last_calc_date": None
+        }
+
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {
+            "remaining": None,
+            "last_calc_date": None
+        }
+
+def save_ticket_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
 # --------------------------------------------------
@@ -157,7 +188,17 @@ def record_ticket_sale(quantity: int):
     new_total = current_sold + quantity
     write_sales(new_total)
 
+    # 🔥 Burn remaining tickets authoritatively
+    state = load_ticket_state()
+    if state.get("remaining") is not None:
+        state["remaining"] = max(
+            int(state["remaining"]) - quantity,
+            0
+        )
+        save_ticket_state(state)
+
     print(f"📈 Tickets sold updated: +{quantity}, total {new_total}")
+
 
 # Step 2R
 def upload_zip_to_r2(order_id: str, zip_bytes: bytes):
@@ -513,6 +554,22 @@ def send_ticket_file(order_id, enforce_limit=False):
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
+@app.route("/ticket_state", methods=["GET"])
+def ticket_state():
+    """
+    Authoritative ticket state for frontend.
+    """
+    state = load_ticket_state()
+    total_sold = read_sales()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
+    return jsonify({
+        "remaining": state.get("remaining"),
+        "last_calc_date": state.get("last_calc_date"),
+        "total_sold": total_sold,
+        "today": today
+    }), 200
+
 @app.route("/tickets_sold", methods=["GET"])
 def tickets_sold():
     """
@@ -538,6 +595,16 @@ def record_sale():
     new_total = current_sold + tickets_bought
 
     write_sales(new_total)
+
+    # 🔥 Burn remaining tickets authoritatively
+    state = load_ticket_state()
+
+    if state.get("remaining") is not None:
+        state["remaining"] = max(
+            int(state["remaining"]) - tickets_bought,
+            0
+        )
+        save_ticket_state(state)
 
     return jsonify({
         "success": True,
@@ -723,6 +790,33 @@ def generate_ticket():
     except Exception as e:
         print("❌ Ticket generation error:", e)
         return jsonify({"error": "Ticket generation failed"}), 500
+
+
+@app.route("/sync_remaining", methods=["POST"])
+def sync_remaining():
+    """
+    Frontend syncs daily recalculated remaining tickets.
+    This happens once per day.
+    """
+    data = request.get_json(force=True)
+    remaining = data.get("remaining")
+
+    if remaining is None:
+        return jsonify({"error": "Missing remaining"}), 400
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
+    state = load_ticket_state()
+    state["remaining"] = int(remaining)
+    state["last_calc_date"] = today
+
+    save_ticket_state(state)
+
+    return jsonify({
+        "success": True,
+        "remaining": state["remaining"],
+        "date": today
+    }), 200
 
 
 # --------------------------------------------------
