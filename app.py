@@ -16,6 +16,39 @@ import boto3
 from botocore.client import Config
 
 # --------------------------------------------------
+# TICKET SALES LEDGER (ADDITIVE – DO NOT MODIFY)
+# --------------------------------------------------
+
+SALES_FILE = os.path.join(BASE_DIR, "ticket_sales.json")
+
+def read_sales():
+    """
+    Returns total tickets sold (persistent).
+    Safe fallback to 0.
+    """
+    if not os.path.exists(SALES_FILE):
+        return 0
+    try:
+        with open(SALES_FILE, "r") as f:
+            return int(json.load(f).get("sold", 0))
+    except Exception:
+        return 0
+
+
+def write_sales(total_sold):
+    """
+    Persist total tickets sold.
+    """
+    with open(SALES_FILE, "w") as f:
+        json.dump(
+            {
+                "sold": int(total_sold),
+                "updated_at": datetime.utcnow().isoformat() + "Z",
+            },
+            f,
+            indent=2,
+        )
+# --------------------------------------------------
 # APP SETUP
 # --------------------------------------------------
 
@@ -472,7 +505,37 @@ def send_ticket_file(order_id, enforce_limit=False):
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
+@app.route("/tickets_sold", methods=["GET"])
+def tickets_sold():
+    """
+    Frontend reads how many tickets are already sold.
+    """
+    return jsonify({
+        "total_sold": read_sales()
+    }), 200
 
+@app.route("/record_sale", methods=["POST"])
+def record_sale():
+    """
+    Records ticket sales AFTER successful payment.
+    Additive only – does not affect ticket generation.
+    """
+    data = request.get_json(force=True)
+    tickets_bought = int(data.get("tickets", 0))
+
+    if tickets_bought <= 0:
+        return jsonify({"error": "Invalid ticket count"}), 400
+
+    current_sold = read_sales()
+    new_total = current_sold + tickets_bought
+
+    write_sales(new_total)
+
+    return jsonify({
+        "success": True,
+        "tickets_bought": tickets_bought,
+        "total_sold": new_total
+    }), 200
 
 @app.route("/", methods=["GET"])
 def health_check():
