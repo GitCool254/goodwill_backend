@@ -153,7 +153,11 @@ if all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
     )
 
 def record_ticket_sale(quantity: int):
-    add_sold_tickets(quantity)
+    current_sold = read_sales()
+    new_total = current_sold + quantity
+    write_sales(new_total)
+
+    print(f"📈 Tickets sold updated: +{quantity}, total {new_total}")
 
 # Step 2R
 def upload_zip_to_r2(order_id: str, zip_bytes: bytes):
