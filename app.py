@@ -556,16 +556,20 @@ def send_ticket_file(order_id, enforce_limit=False):
 # --------------------------------------------------
 @app.route("/ticket_state", methods=["GET"])
 def ticket_state():
-    """
-    Authoritative ticket state for frontend.
-    """
     state = load_ticket_state()
     total_sold = read_sales()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
+    # ✅ FIRST-TIME INITIALIZATION SAFETY
+    if state.get("remaining") is None:
+        # frontend will still overwrite via /sync_remaining
+        state["remaining"] = 0
+        state["last_calc_date"] = today
+        save_ticket_state(state)
+
     return jsonify({
-        "remaining": state.get("remaining"),
-        "last_calc_date": state.get("last_calc_date"),
+        "remaining": state["remaining"],
+        "last_calc_date": state["last_calc_date"],
         "total_sold": total_sold,
         "today": today
     }), 200
