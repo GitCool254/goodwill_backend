@@ -478,10 +478,27 @@ def send_ticket_file(order_id, enforce_limit=False):
     # 🔹 STEP 4: Local-first, R2 fallback
     if not os.path.exists(order_dir):
 
-        # Attempt R2 recovery (ZIP orders only)
-        zip_bytes = fetch_zip_from_r2(order_id)
+        # ✅ Step 1: Try orders index recovery (authoritative history)
+        index = load_orders_index()
+        order = index.get("orders", {}).get(order_id)
 
-        if not zip_bytes:
+        if order:
+            os.makedirs(order_dir, exist_ok=True)
+
+            # If this was a multi-ticket order, expect ZIP from R2
+            if order.get("quantity", 1) > 1:
+                zip_bytes = fetch_zip_from_r2(order_id)
+
+                if not zip_bytes:
+                    return jsonify({"error": "Ticket archive unavailable"}), 404
+
+                zip_path = os.path.join(order_dir, f"RaffleTickets_{order_id}.zip")
+                with open(zip_path, "wb") as f:
+                    f.write(zip_bytes)
+
+            # Single-ticket orders rely on cached or regenerated file
+            # (Frontend fix will ensure immediate download)
+        else:
             return jsonify({"error": "Ticket not found"}), 404
 
         # Basic integrity check (ZIP magic header)
