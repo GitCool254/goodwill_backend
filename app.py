@@ -583,16 +583,6 @@ def tickets_sold():
         "total_sold": read_sales()
     }), 200
 
-
-@app.route("/tickets_sold", methods=["GET"])
-def tickets_sold():
-    """
-    Frontend reads how many tickets are already sold.
-    """
-    return jsonify({
-        "total_sold": read_sales()
-    }), 200
-
 @app.route("/record_sale", methods=["POST"])
 def record_sale():
     """
