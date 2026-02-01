@@ -603,7 +603,7 @@ def record_sale():
     # 🔥 Burn remaining tickets authoritatively
     state = load_ticket_state()
     if state.get("remaining") is not None:
-        state["remaining"] = max(1
+        state["remaining"] = max(
             int(state["remaining"]) - quantity,
             0
         )
