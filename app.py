@@ -583,6 +583,16 @@ def tickets_sold():
         "total_sold": read_sales()
     }), 200
 
+
+@app.route("/tickets_sold", methods=["GET"])
+def tickets_sold():
+    """
+    Frontend reads how many tickets are already sold.
+    """
+    return jsonify({
+        "total_sold": read_sales()
+    }), 200
+
 @app.route("/record_sale", methods=["POST"])
 def record_sale():
     """
@@ -603,9 +613,10 @@ def record_sale():
     # 🔥 Burn remaining tickets authoritatively
     state = load_ticket_state()
 
+    state = load_ticket_state()
     if state.get("remaining") is not None:
         state["remaining"] = max(
-            int(state["remaining"]) - tickets_bought,
+            int(state["remaining"]) - quantity,
             0
         )
         save_ticket_state(state)
@@ -812,8 +823,7 @@ def sync_remaining():
 
     state = load_ticket_state()
     state["remaining"] = int(remaining)
-    state["last_calc_date"] = today
-
+    state["last_calc_date"] = today                                    
     save_ticket_state(state)
 
     return jsonify({
