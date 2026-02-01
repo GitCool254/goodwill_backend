@@ -604,7 +604,7 @@ def record_sale():
     state = load_ticket_state()
     if state.get("remaining") is not None:
         state["remaining"] = max(
-            int(state["remaining"]) - quantity,
+            int(state["remaining"]) - tickets_bought,
             0
         )
         save_ticket_state(state)
