@@ -213,14 +213,18 @@ if all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
     )
 
 def record_ticket_sale(quantity: int):
-    """
-    Records ticket sales ONLY.
-    Does NOT touch remaining tickets.
-    Remaining is updated ONLY via daily sync.
-    """
     current_sold = read_sales()
     new_total = current_sold + quantity
     write_sales(new_total)
+
+    # 🔥 Burn remaining tickets authoritatively
+    state = load_ticket_state()
+    if state.get("remaining") is not None:
+        state["remaining"] = max(
+            int(state["remaining"]) - quantity,
+            0
+        )
+        save_ticket_state(state)
 
     print(f"📈 Tickets sold updated: +{quantity}, total {new_total}")
 
@@ -622,7 +626,7 @@ def tickets_sold():
 def record_sale():
     """
     Records ticket sales AFTER successful payment.
-    Additive only – does NOT modify remaining tickets.
+    Additive only – does not affect ticket generation.
     """
     data = request.get_json(force=True)
     tickets_bought = int(data.get("tickets", 0))
@@ -634,6 +638,15 @@ def record_sale():
     new_total = current_sold + tickets_bought
 
     write_sales(new_total)
+
+    # 🔥 Burn remaining tickets authoritatively
+    state = load_ticket_state()
+    if state.get("remaining") is not None:
+        state["remaining"] = max(
+            int(state["remaining"]) - tickets_bought,
+            0
+        )
+        save_ticket_state(state)
 
     return jsonify({
         "success": True,
