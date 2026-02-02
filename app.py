@@ -21,9 +21,13 @@ from botocore.client import Config
 
 app = Flask(__name__)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
 CORS(
     app,
     resources={
+        # ----------------------------------
+        # Ticket generation & downloads
+        # ----------------------------------
         r"/generate_ticket": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
@@ -47,7 +51,32 @@ CORS(
             ],
             "expose_headers": ["Content-Disposition"],
         },
-        r"/my_tickets": {  # ✅ ADD THIS
+        r"/my_tickets": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
+
+        # ----------------------------------
+        # ✅ Ticket state & syncing (FIX)
+        # ----------------------------------
+        r"/ticket_state": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
+        r"/sync_remaining": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
+        r"/tickets_sold": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
@@ -577,16 +606,9 @@ def ticket_state():
     total_sold = read_sales()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # ✅ FIRST-TIME INITIALIZATION SAFETY
-    if state.get("remaining") is None:
-        # frontend will still overwrite via /sync_remaining
-        state["remaining"] = 0
-        state["last_calc_date"] = today
-        save_ticket_state(state)
-
     return jsonify({
-        "remaining": state["remaining"],
-        "last_calc_date": state["last_calc_date"],
+        "remaining": state.get("remaining"),   # allow None
+        "last_calc_date": state.get("last_calc_date"),
         "total_sold": total_sold,
         "today": today
     }), 200
