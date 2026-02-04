@@ -853,7 +853,6 @@ def sync_remaining():
     state = load_ticket_state()
     current_remaining = state.get("remaining")
 
-    # 🔒 Authoritative rule: remaining is immutable here
     # 🔒 Authoritative rule: NEVER increase remaining
     if current_remaining is None:
         final_remaining = incoming_remaining
