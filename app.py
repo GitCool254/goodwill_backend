@@ -853,12 +853,14 @@ def sync_remaining():
     state = load_ticket_state()
     current_remaining = state.get("remaining")
 
-    # 🔒 Authoritative rule: NEVER increase remaining
     # 🔒 Authoritative rule: remaining is immutable here
+    # 🔒 Authoritative rule: NEVER increase remaining
     if current_remaining is None:
-        state["remaining"] = None
+        final_remaining = incoming_remaining
     else:
-        state["remaining"] = int(current_remaining)
+        final_remaining = min(int(current_remaining), incoming_remaining)
+
+    state["remaining"] = max(final_remaining, 0)
     state["last_calc_date"] = today
     save_ticket_state(state)
 
