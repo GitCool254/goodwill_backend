@@ -839,7 +839,7 @@ def sync_remaining():
     """
     Frontend syncs daily recalculated remaining tickets.
     This happens once per day.
-    Backend NEVER allows remaining to increase.
+    Backend remaining is AUTHORITATIVE and IMMUTABLE here.
     """
     data = request.get_json(force=True)
     incoming_remaining = data.get("remaining")
@@ -847,19 +847,19 @@ def sync_remaining():
     if incoming_remaining is None:
         return jsonify({"error": "Missing remaining"}), 400
 
-    incoming_remaining = int(incoming_remaining)
+    # Incoming value is intentionally ignored
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
     state = load_ticket_state()
     current_remaining = state.get("remaining")
 
-    # 🔒 Authoritative rule: NEVER increase remaining
-    if current_remaining is None:
-        final_remaining = incoming_remaining
+    # 🔒 Authoritative rule:
+    # remaining NEVER changes in this endpoint
+    if current_remaining is not None:
+        state["remaining"] = int(current_remaining)
     else:
-        final_remaining = min(int(current_remaining), incoming_remaining)
+        state["remaining"] = None
 
-    state["remaining"] = max(final_remaining, 0)
     state["last_calc_date"] = today
     save_ticket_state(state)
 
