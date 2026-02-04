@@ -932,6 +932,22 @@ def redownload_ticket():
 
     return send_ticket_file(order_id, enforce_limit=True)
 
+@app.route("/admin/reset_tickets", methods=["POST"])
+def reset_tickets():
+    state = load_ticket_state()
+
+    state["remaining"] = 55  # MUST match INITIAL_TICKETS
+    state["last_calc_date"] = None
+
+    save_ticket_state(state)
+
+    write_sales(0)
+
+    return jsonify({
+        "success": True,
+        "remaining": state["remaining"]
+    }), 200
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
