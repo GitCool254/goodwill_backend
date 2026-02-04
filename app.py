@@ -838,8 +838,10 @@ def generate_ticket():
 def sync_remaining():
     """
     Frontend syncs daily recalculated remaining tickets.
-    This happens once per day.
-    Backend NEVER allows remaining to increase.
+    Backend enforces:
+    - ONE decay per day
+    - NEVER increases remaining
+    - NEVER overrides ticket sales
     """
     data = request.get_json(force=True)
     incoming_remaining = data.get("remaining")
@@ -852,8 +854,18 @@ def sync_remaining():
 
     state = load_ticket_state()
     current_remaining = state.get("remaining")
+    last_calc_date = state.get("last_calc_date")
 
-    # 🔒 Authoritative rule: NEVER increase remaining
+    # 🔒 Already decayed today → reject silently
+    if last_calc_date == today:
+        return jsonify({
+            "success": True,
+            "remaining": current_remaining,
+            "date": today,
+            "note": "Decay already applied today"
+        }), 200
+
+    # 🔒 NEVER increase remaining
     if current_remaining is None:
         final_remaining = incoming_remaining
     else:
