@@ -696,6 +696,7 @@ def ticket_state():
         "remaining": state.get("remaining"),   # allow None
         "last_calc_date": state.get("last_calc_date"),
         "total_sold": total_sold,
+        "initialized": state.get("initialized", False),
         "today": today
     }), 200
 
