@@ -167,46 +167,25 @@ def seeded_random(seed: int) -> float:
     x = math.sin(seed) * 10000
     return x - math.floor(x)
 
-def compute_daily_decay(today_str: str, days_passed: int) -> int:
-    decay_factor = min(days_passed / DEDICATED_DAYS, 1)
+def compute_daily_decay(days_passed: int) -> int:
+    if days_passed <= 0:
+        return 0
 
-    # Stop decay if raffle ended
-    if days_passed >= DEDICATED_DAYS:
-        state["remaining"] = max(state.get("remaining", 0), 0)
-        state["last_calc_date"] = today
-        save_ticket_state(state)
-        return state
+    progress = min(days_passed / DEDICATED_DAYS, 1)
 
-    min_daily = min(
-        5 + decay_factor * 3,
-        INITIAL_TICKETS / max(days_passed, 1)
-    )
+    base_min = 3
+    base_max = 6
 
-    max_daily = min(
-        10 + decay_factor * 3,
-        INITIAL_TICKETS / max(days_passed, 1)
-    )
+    min_daily = base_min + int(progress * 4)
+    max_daily = base_max + int(progress * 6)
 
-    seed = int(today_str.replace("-", ""))
-
-    if days_passed >= DEDICATED_DAYS:
-        return float("inf")
-
-    return int(
-        seeded_random(seed) * (max_daily - min_daily + 1) + min_daily
-    )
+    return random.randint(min_daily, max_daily)
 
 def apply_daily_decay_if_needed():
     state = load_ticket_state()
-
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    last_calc = state.get("last_calc_date")
 
-    # Already decayed today → do nothing
-    if last_calc == today:
-        return state
-
-    # Initialize remaining if missing
+    # Initialize once
     if not state.get("initialized"):
         sold = read_sales()
         state["remaining"] = max(INITIAL_TICKETS - sold, 0)
@@ -215,33 +194,26 @@ def apply_daily_decay_if_needed():
         save_ticket_state(state)
         return state
 
-    # 🔒 Stop decay permanently if sold out
+    # Already decayed today → do nothing
+    if state.get("last_calc_date") == today:
+        return state
+
+    # Stop if sold out
     if int(state.get("remaining", 0)) <= 0:
         state["remaining"] = 0
         state["last_calc_date"] = today
         save_ticket_state(state)
         return state
 
-    # Compute days passed
     start_date = datetime.strptime(RAFFLE_START_DATE, "%Y-%m-%d")
-    days_passed = max(
-        (datetime.utcnow() - start_date).days,
-        0
-    )
+    days_passed = max((datetime.utcnow() - start_date).days, 0)
 
-    daily_decay = compute_daily_decay(today, days_passed)
+    decay = compute_daily_decay(days_passed)
 
-    if daily_decay == float("inf"):
-        state["remaining"] = 0
-    else:
-        state["remaining"] = max(
-            int(state["remaining"]) - int(daily_decay),
-            0
-        )
-
+    state["remaining"] = max(int(state["remaining"]) - decay, 0)
     state["last_calc_date"] = today
-    save_ticket_state(state)
 
+    save_ticket_state(state)
     return state
 
 # --------------------------------------------------
@@ -305,11 +277,21 @@ def record_ticket_sale(quantity: int):
 
     # 🔥 Burn remaining tickets authoritatively
     state = load_ticket_state()
+
+    # Ensure state initialized
+    if not state.get("initialized"):
+        state["remaining"] = max(INITIAL_TICKETS - read_sales(), 0)
+        state["initialized"] = True
+
     remaining = int(state.get("remaining", 0))
     if remaining < quantity:
         raise ValueError("Not enough tickets remaining")
 
     state["remaining"] = remaining - quantity
+
+    # 🔒 Lock today so decay cannot override sale
+    state["last_calc_date"] = datetime.utcnow().strftime("%Y-%m-%d")
+
     save_ticket_state(state)
 
     print(f"📈 Tickets sold updated: +{quantity}, total {new_total}")
