@@ -14,6 +14,7 @@ from datetime import datetime
 from werkzeug.wsgi import FileWrapper
 import boto3
 from botocore.client import Config
+import math
 
 # --------------------------------------------------
 # APP SETUP
@@ -63,13 +64,6 @@ CORS(
         # ✅ Ticket state & syncing (FIX)
         # ----------------------------------
         r"/ticket_state": {
-            "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
-                "https://goodwillrafflestore.onrender.com",
-                "https://goodwillrafflestores.vercel.app",
-            ]
-        },
-        r"/sync_remaining": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
@@ -142,7 +136,8 @@ def load_ticket_state():
     if not os.path.exists(STATE_FILE):
         return {
             "remaining": None,
-            "last_calc_date": None
+            "last_calc_date": None,
+            "initialized": False
         }
 
     try:
@@ -151,12 +146,103 @@ def load_ticket_state():
     except Exception:
         return {
             "remaining": None,
-            "last_calc_date": None
+            "last_calc_date": None,
+            "initialized": False
         }
 
 def save_ticket_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
+
+
+# --------------------------------------------------
+# DAILY TICKET DECAY (AUTHORITATIVE)
+# --------------------------------------------------
+
+RAFFLE_START_DATE = "2026-01-29"
+INITIAL_TICKETS = 55
+DEDICATED_DAYS = 10
+
+def seeded_random(seed: int) -> float:
+    x = math.sin(seed) * 10000
+    return x - math.floor(x)
+
+def compute_daily_decay(today_str: str, days_passed: int) -> int:
+    decay_factor = min(days_passed / DEDICATED_DAYS, 1)
+
+    # Stop decay if raffle ended
+    if days_passed >= DEDICATED_DAYS:
+        state["remaining"] = max(state.get("remaining", 0), 0)
+        state["last_calc_date"] = today
+        save_ticket_state(state)
+        return state
+
+    min_daily = min(
+        5 + decay_factor * 3,
+        INITIAL_TICKETS / max(days_passed, 1)
+    )
+
+    max_daily = min(
+        10 + decay_factor * 3,
+        INITIAL_TICKETS / max(days_passed, 1)
+    )
+
+    seed = int(today_str.replace("-", ""))
+
+    if days_passed >= DEDICATED_DAYS:
+        return float("inf")
+
+    return int(
+        seeded_random(seed) * (max_daily - min_daily + 1) + min_daily
+    )
+
+def apply_daily_decay_if_needed():
+    state = load_ticket_state()
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    last_calc = state.get("last_calc_date")
+
+    # Already decayed today → do nothing
+    if last_calc == today:
+        return state
+
+    # Initialize remaining if missing
+    if not state.get("initialized"):
+        sold = read_sales()
+        state["remaining"] = max(INITIAL_TICKETS - sold, 0)
+        state["initialized"] = True
+        state["last_calc_date"] = today
+        save_ticket_state(state)
+        return state
+
+    # 🔒 Stop decay permanently if sold out
+    if int(state.get("remaining", 0)) <= 0:
+        state["remaining"] = 0
+        state["last_calc_date"] = today
+        save_ticket_state(state)
+        return state
+
+    # Compute days passed
+    start_date = datetime.strptime(RAFFLE_START_DATE, "%Y-%m-%d")
+    days_passed = max(
+        (datetime.utcnow() - start_date).days,
+        0
+    )
+
+    daily_decay = compute_daily_decay(today, days_passed)
+
+    if daily_decay == float("inf"):
+        state["remaining"] = 0
+    else:
+        state["remaining"] = max(
+            int(state["remaining"]) - int(daily_decay),
+            0
+        )
+
+    state["last_calc_date"] = today
+    save_ticket_state(state)
+
+    return state
 
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
@@ -219,12 +305,12 @@ def record_ticket_sale(quantity: int):
 
     # 🔥 Burn remaining tickets authoritatively
     state = load_ticket_state()
-    if state.get("remaining") is not None:
-        state["remaining"] = max(
-            int(state["remaining"]) - quantity,
-            0
-        )
-        save_ticket_state(state)
+    remaining = int(state.get("remaining", 0))
+    if remaining < quantity:
+        raise ValueError("Not enough tickets remaining")
+
+    state["remaining"] = remaining - quantity
+    save_ticket_state(state)
 
     print(f"📈 Tickets sold updated: +{quantity}, total {new_total}")
 
@@ -602,7 +688,7 @@ def send_ticket_file(order_id, enforce_limit=False):
 # --------------------------------------------------
 @app.route("/ticket_state", methods=["GET"])
 def ticket_state():
-    state = load_ticket_state()
+    state = apply_daily_decay_if_needed()
     total_sold = read_sales()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -624,34 +710,26 @@ def tickets_sold():
 
 @app.route("/record_sale", methods=["POST"])
 def record_sale():
-    """
-    Records ticket sales AFTER successful payment.
-    Additive only – does not affect ticket generation.
-    """
+    ok, err = verify_request_hmac(request)
+    if not ok:
+        return jsonify({"error": err}), 403
+
     data = request.get_json(force=True)
     tickets_bought = int(data.get("tickets", 0))
 
     if tickets_bought <= 0:
         return jsonify({"error": "Invalid ticket count"}), 400
 
-    current_sold = read_sales()
-    new_total = current_sold + tickets_bought
-
-    write_sales(new_total)
-
-    # 🔥 Burn remaining tickets authoritatively
-    state = load_ticket_state()
-    if state.get("remaining") is not None:
-        state["remaining"] = max(
-            int(state["remaining"]) - tickets_bought,
-            0
-        )
-        save_ticket_state(state)
+    # 🔒 Authoritative update (sales + remaining)
+    try:
+        record_ticket_sale(tickets_bought)
+    except ValueError:
+        return jsonify({"error": "Tickets sold out"}), 409
 
     return jsonify({
         "success": True,
         "tickets_bought": tickets_bought,
-        "total_sold": new_total
+        "total_sold": read_sales()
     }), 200
 
 @app.route("/", methods=["GET"])
@@ -820,7 +898,10 @@ def generate_ticket():
             ticket_numbers=ticket_numbers,
         )
 
-        record_ticket_sale(quantity)
+        try:
+            record_ticket_sale(quantity)
+        except ValueError:
+            return jsonify({"error": "Tickets sold out"}), 409
 
         cleanup_old_orders()
 
@@ -832,55 +913,6 @@ def generate_ticket():
     except Exception as e:
         print("❌ Ticket generation error:", e)
         return jsonify({"error": "Ticket generation failed"}), 500
-
-
-@app.route("/sync_remaining", methods=["POST"])
-def sync_remaining():
-    """
-    Frontend syncs daily recalculated remaining tickets.
-    Backend enforces:
-    - ONE decay per day
-    - NEVER increases remaining
-    - NEVER overrides ticket sales
-    """
-    data = request.get_json(force=True)
-    incoming_remaining = data.get("remaining")
-
-    if incoming_remaining is None:
-        return jsonify({"error": "Missing remaining"}), 400
-
-    incoming_remaining = int(incoming_remaining)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-
-    state = load_ticket_state()
-    current_remaining = state.get("remaining")
-    last_calc_date = state.get("last_calc_date")
-
-    # 🔒 Already decayed today → reject silently
-    if last_calc_date == today:
-        return jsonify({
-            "success": True,
-            "remaining": current_remaining,
-            "date": today,
-            "note": "Decay already applied today"
-        }), 200
-
-    # 🔒 NEVER increase remaining
-    if current_remaining is None:
-        final_remaining = incoming_remaining
-    else:
-        final_remaining = min(int(current_remaining), incoming_remaining)
-
-    state["remaining"] = max(final_remaining, 0)
-    state["last_calc_date"] = today
-    save_ticket_state(state)
-
-    return jsonify({
-        "success": True,
-        "remaining": state["remaining"],
-        "date": today
-    }), 200
-
 
 # --------------------------------------------------
 # MAIN
