@@ -271,30 +271,35 @@ if all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
     )
 
 def record_ticket_sale(quantity: int):
+    # 1️⃣ Update persistent sales ledger
     current_sold = read_sales()
     new_total = current_sold + quantity
     write_sales(new_total)
 
-    # 🔥 Burn remaining tickets authoritatively
+    # 2️⃣ Load authoritative ticket state
     state = load_ticket_state()
 
-    # Ensure state initialized
+    # 3️⃣ Initialize state if first sale ever
     if not state.get("initialized"):
-        state["remaining"] = max(INITIAL_TICKETS - read_sales(), 0)
+        state["remaining"] = max(INITIAL_TICKETS - current_sold, 0)
         state["initialized"] = True
 
     remaining = int(state.get("remaining", 0))
+
+    # 4️⃣ Hard stop if not enough tickets
     if remaining < quantity:
         raise ValueError("Not enough tickets remaining")
 
+    # 5️⃣ 🔥 Burn tickets immediately (THIS IS THE HACK)
     state["remaining"] = remaining - quantity
 
-    # 🔒 Lock today so decay cannot override sale
+    # 6️⃣ 🔒 Lock today so decay CANNOT run again today
     state["last_calc_date"] = datetime.utcnow().strftime("%Y-%m-%d")
 
+    # 7️⃣ Persist state
     save_ticket_state(state)
 
-    print(f"📈 Tickets sold updated: +{quantity}, total {new_total}")
+    print(f"📈 Tickets sold: +{quantity}, remaining {state['remaining']}")
 
 
 # Step 2R
