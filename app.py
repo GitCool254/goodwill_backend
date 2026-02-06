@@ -212,7 +212,8 @@ def save_ticket_state(state):
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
 
-RAFFLE_START_DATE = "2026-01-29"
+RAFFLE_START_DATE = "2026-02-02"
+SIMULATED_START_DATE = "2026-02-04"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
 RAFFLE_ID = "goodwill-raffle-2026"
@@ -285,7 +286,8 @@ def apply_daily_decay_if_needed():
         save_ticket_state(state)
         return state
 
-    start_date = datetime.strptime(RAFFLE_START_DATE, "%Y-%m-%d")
+    start_date_str = SIMULATED_START_DATE or RAFFLE_START_DATE
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
     days_passed = max((datetime.utcnow() - start_date).days, 0)
 
     total_decay = compute_total_decay(days_passed)
