@@ -185,14 +185,21 @@ def apply_daily_decay_if_needed():
     state = load_ticket_state()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # Initialize once
+    # Initialize or reconcile state (NEVER allow remaining to increase)
+    sold = read_sales()
+    max_allowed = max(INITIAL_TICKETS - sold, 0)
+
     if not state.get("initialized"):
-        sold = read_sales()
-        state["remaining"] = max(INITIAL_TICKETS - sold, 0)
+        state["remaining"] = max_allowed
         state["initialized"] = True
         state["last_calc_date"] = today
         save_ticket_state(state)
         return state
+
+    # 🔒 HARD GUARD: never allow remaining to go UP
+    if state.get("remaining") is None or state["remaining"] > max_allowed:
+        state["remaining"] = max_allowed
+        save_ticket_state(state)
 
     # Already decayed today → do nothing
     if state.get("last_calc_date") == today:
