@@ -215,12 +215,17 @@ def save_ticket_state(state):
 RAFFLE_START_DATE = "2026-01-29"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
+RAFFLE_ID = "goodwill-raffle-2026"
 
 def seeded_random(seed: int) -> float:
     x = math.sin(seed) * 10000
     return x - math.floor(x)
 
 def compute_daily_decay(days_passed: int) -> int:
+    """
+    Deterministic daily decay.
+    Same raffle + same day = same decay forever.
+    """
     if days_passed <= 0:
         return 0
 
@@ -232,7 +237,22 @@ def compute_daily_decay(days_passed: int) -> int:
     min_daily = base_min + int(progress * 4)
     max_daily = base_max + int(progress * 6)
 
-    return random.randint(min_daily, max_daily)
+    # 🔒 Deterministic seed per raffle + per day
+    seed_str = f"{RAFFLE_ID}:{days_passed}"
+    seed_hash = hashlib.sha256(seed_str.encode()).hexdigest()
+    seed_int = int(seed_hash[:8], 16)
+
+    rng = random.Random(seed_int)
+    return rng.randint(min_daily, max_daily)
+
+def compute_total_decay(days_passed: int) -> int:
+    """
+    Returns cumulative decay from day 1 up to days_passed.
+    """
+    total = 0
+    for d in range(1, days_passed + 1):
+        total += compute_daily_decay(d)
+    return total
 
 def apply_daily_decay_if_needed():
     state = load_ticket_state()
@@ -268,9 +288,15 @@ def apply_daily_decay_if_needed():
     start_date = datetime.strptime(RAFFLE_START_DATE, "%Y-%m-%d")
     days_passed = max((datetime.utcnow() - start_date).days, 0)
 
-    decay = compute_daily_decay(days_passed)
+    total_decay = compute_total_decay(days_passed)
+    sold = read_sales()
 
-    state["remaining"] = max(int(state["remaining"]) - decay, 0)
+    authoritative_remaining = max(
+        INITIAL_TICKETS - total_decay - sold,
+        0
+    )
+
+    state["remaining"] = authoritative_remaining
     state["last_calc_date"] = today
 
     save_ticket_state(state)
