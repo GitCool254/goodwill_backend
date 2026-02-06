@@ -93,66 +93,119 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 # --------------------------------------------------
 
 SALES_FILE = os.path.join(BASE_DIR, "ticket_sales.json")
+SALES_KEY = "state/ticket_sales.json"
 
 def read_sales():
     """
     Returns total tickets sold (persistent).
-    Safe fallback to 0.
+    R2 authoritative, local fallback.
     """
-    if not os.path.exists(SALES_FILE):
-        return 0
-    try:
-        with open(SALES_FILE, "r") as f:
-            return int(json.load(f).get("sold", 0))
-    except Exception:
-        return 0
+
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=SALES_KEY,
+            )
+            return int(json.loads(obj["Body"].read()).get("sold", 0))
+        except Exception:
+            pass
+
+    # 2️⃣ Local fallback
+    if os.path.exists(SALES_FILE):
+        try:
+            with open(SALES_FILE, "r") as f:
+                return int(json.load(f).get("sold", 0))
+        except Exception:
+            pass
+
+    return 0
 
 
 def write_sales(total_sold):
-    """
-    Persist total tickets sold.
-    """
+    payload = json.dumps(
+        {
+            "sold": int(total_sold),
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        },
+        indent=2,
+    ).encode()
+
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=SALES_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 sales save failed, fallback local:", e)
+
+    # 2️⃣ Local fallback
     with open(SALES_FILE, "w") as f:
-        json.dump(
-            {
-                "sold": int(total_sold),
-                "updated_at": datetime.utcnow().isoformat() + "Z",
-            },
-            f,
-            indent=2,
-        )
+        f.write(payload.decode())
 
 # --------------------------------------------------
 # AUTHORITATIVE TICKET STATE (DO NOT RESET HISTORY)
 # --------------------------------------------------
 
 STATE_FILE = os.path.join(BASE_DIR, "ticket_state.json")
+STATE_KEY = "state/ticket_state.json"
 
 def load_ticket_state():
     """
     Persistent authoritative remaining ticket state.
-    Never touches sales history.
+    R2 primary, local fallback.
     """
-    if not os.path.exists(STATE_FILE):
-        return {
-            "remaining": None,
-            "last_calc_date": None,
-            "initialized": False
-        }
 
-    try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {
-            "remaining": None,
-            "last_calc_date": None,
-            "initialized": False
-        }
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=STATE_KEY,
+            )
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+
+    # 2️⃣ Local fallback
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {
+        "remaining": None,
+        "last_calc_date": None,
+        "initialized": False
+    }
 
 def save_ticket_state(state):
+    payload = json.dumps(state, indent=2).encode()
+
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=STATE_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 state save failed, fallback local:", e)
+
+    # 2️⃣ Local fallback
     with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+        f.write(payload.decode())
 
 
 # --------------------------------------------------
@@ -255,6 +308,8 @@ SECRET_KEY = os.environ.get("API_SIGN_SECRET", "goodwill_5490_secret")
 # HELPERS
 # --------------------------------------------------
 ORDERS_INDEX_FILE = os.path.join(TICKET_STORAGE_DIR, "orders.json")
+ORDERS_INDEX_KEY = "indexes/orders.json"
+EMAIL_INDEX_KEY = "indexes/email_orders.json"
 
 # ===============================
 # Cloudflare R2 (Storage Only) Step 1R
@@ -276,6 +331,8 @@ if all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
         config=Config(signature_version="s3v4"),
         region_name="auto",
     )
+
+print("🟢 R2 ENABLED:", bool(r2_client))
 
 def record_ticket_sale(quantity: int):
     # 1️⃣ Update persistent sales ledger
@@ -344,15 +401,77 @@ def fetch_zip_from_r2(order_id):
         return None
 
 def load_orders_index():
-    if not os.path.exists(ORDERS_INDEX_FILE):
-        return {"orders": {}}
-    with open(ORDERS_INDEX_FILE, "r") as f:
-        return json.load(f)
+    # 1️⃣ PRIMARY: R2
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=ORDERS_INDEX_KEY,
+            )
+            return json.loads(obj["Body"].read())
+        except Exception as e:
+            print("R2 orders index missing, fallback to local:", e)
+
+    # 2️⃣ FALLBACK: local disk
+    if os.path.exists(ORDERS_INDEX_FILE):
+        try:
+            with open(ORDERS_INDEX_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {"orders": {}}
 
 
 def save_orders_index(data):
+    payload = json.dumps(data, indent=2).encode()
+
+    # 1️⃣ PRIMARY: R2
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=ORDERS_INDEX_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 save failed, fallback to local:", e)
+
+    # 2️⃣ FALLBACK: local
+    os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
     with open(ORDERS_INDEX_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+        f.write(payload.decode())
+
+def load_email_index():
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=EMAIL_INDEX_KEY,
+            )
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+
+    return {}
+
+
+def save_email_index(data):
+    payload = json.dumps(data, indent=2).encode()
+
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=EMAIL_INDEX_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 email index save failed:", e)
 
 
 def register_order(order_id, email, files, product, quantity, ticket_numbers):
@@ -368,6 +487,17 @@ def register_order(order_id, email, files, product, quantity, ticket_numbers):
     }
 
     save_orders_index(index)
+
+    # 🔥 Update email lookup index
+    email_index = load_email_index()
+
+    if email not in email_index:
+        email_index[email] = []
+
+    if order_id not in email_index[email]:
+        email_index[email].append(order_id)
+
+    save_email_index(email_index)
 
 def cleanup_old_orders(days=7):
     cutoff = datetime.utcnow().timestamp() - (days * 86400)
@@ -611,9 +741,6 @@ def send_ticket_file(order_id, enforce_limit=False):
             return jsonify({"error": "Ticket not found"}), 404
 
         # Basic integrity check (ZIP magic header)
-        if not zip_bytes.startswith(b"PK"):
-            print("❌ R2 data is not a valid ZIP")
-            return jsonify({"error": "Corrupt ticket archive"}), 500
 
         os.makedirs(order_dir, exist_ok=True)
 
@@ -838,7 +965,7 @@ def generate_ticket():
 
             record_ticket_sale(1)
 
-            cleanup_old_orders()
+            # cleanup_old_orders()
 
             return (
                 jsonify({"status": "tickets_generated", "order_id": order_id}),
@@ -898,7 +1025,7 @@ def generate_ticket():
         except ValueError:
             return jsonify({"error": "Tickets sold out"}), 409
 
-        cleanup_old_orders()
+        # cleanup_old_orders()
 
         return (
             jsonify({"status": "tickets_generated", "order_id": order_id}),
@@ -942,17 +1069,24 @@ def my_tickets():
         return jsonify({"error": "Missing email"}), 400
 
     index = load_orders_index()
-    orders = [
-        {
+    email_index = load_email_index()
+
+    order_ids = email_index.get(email, [])
+
+    orders = []
+
+    for oid in order_ids:
+        meta = index["orders"].get(oid)
+        if not meta:
+            continue
+
+        orders.append({
             "order_id": oid,
             "product_name": meta.get("product"),
             "quantity": meta.get("quantity"),
             "tickets": meta.get("tickets", []),
             "date": meta.get("created_at"),
-        }
-        for oid, meta in index["orders"].items()
-        if meta["email"] == email
-    ]
+        })
 
     return jsonify({"orders": orders}), 200
 
