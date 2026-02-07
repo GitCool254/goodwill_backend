@@ -838,13 +838,19 @@ def send_ticket_file(order_id, enforce_limit=False):
 @app.route("/ticket_state", methods=["GET"])
 def ticket_state():
     state = apply_daily_decay_if_needed()
-    total_sold = read_sales()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
+    remaining = state.get("remaining")
+
+    # ✅ UI-friendly definition
+    tickets_sold_ui = None
+    if isinstance(remaining, int):
+        tickets_sold_ui = max(INITIAL_TICKETS - remaining, 0)
+
     return jsonify({
-        "remaining": state.get("remaining"),   # allow None
+        "remaining": remaining,                 # authoritative
+        "tickets_sold": tickets_sold_ui,         # ✅ FIXED VALUE
         "last_calc_date": state.get("last_calc_date"),
-        "total_sold": total_sold,
         "initialized": state.get("initialized", False),
         "today": today
     }), 200
