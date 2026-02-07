@@ -314,7 +314,13 @@ TICKET_STORAGE_DIR = os.environ.get(
 
 os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
 
-MAX_REDOWNLOADS = 2
+MAX_REDOWNLOADS = 3
+
+# --------------------------------------------------
+# CLEANUP POLICY
+# --------------------------------------------------
+CLEANUP_AFTER_DAYS = 10
+SECONDS_PER_DAY = 86400
 
 # --------------------------------------------------
 # EVENT DATA
@@ -414,6 +420,20 @@ def upload_zip_to_r2(order_id: str, zip_bytes: bytes):
         # Silent fail — log only
         print("R2 upload failed:", e)
 
+def upload_pdf_to_r2(order_id: str, filename: str, pdf_bytes: bytes):
+    if not r2_client:
+        return
+
+    try:
+        r2_client.put_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=f"tickets/{order_id}/{filename}",
+            Body=pdf_bytes,
+            ContentType="application/pdf"
+        )
+    except Exception as e:
+        print("R2 PDF upload failed:", e)
+
 def fetch_zip_from_r2(order_id):
     if not r2_client:
         return None
@@ -427,6 +447,53 @@ def fetch_zip_from_r2(order_id):
     except Exception as e:
         print("R2 fetch failed:", e)
         return None
+
+def fetch_pdf_from_r2(order_id: str, filename: str):
+    if not r2_client:
+        return None
+
+    try:
+        obj = r2_client.get_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=f"tickets/{order_id}/{filename}",
+        )
+        return obj["Body"].read()
+    except Exception as e:
+        print("R2 PDF fetch failed:", e)
+        return None
+
+def cleanup_old_r2_objects(days=CLEANUP_AFTER_DAYS):
+    """
+    Deletes old ticket ZIPs and PDFs from R2.
+    Safe, best-effort, non-blocking.
+    """
+    if not r2_client:
+        return
+
+    cutoff_ts = datetime.utcnow().timestamp() - (days * SECONDS_PER_DAY)
+
+    try:
+        paginator = r2_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(
+            Bucket=R2_BUCKET_NAME,
+            Prefix="tickets/"
+        )
+
+        for page in pages:
+            for obj in page.get("Contents", []):
+                last_modified = obj["LastModified"].timestamp()
+                if last_modified < cutoff_ts:
+                    try:
+                        r2_client.delete_object(
+                            Bucket=R2_BUCKET_NAME,
+                            Key=obj["Key"]
+                        )
+                        print("🧹 R2 deleted:", obj["Key"])
+                    except Exception as e:
+                        print("R2 delete failed:", e)
+
+    except Exception as e:
+        print("R2 cleanup error:", e)
 
 def load_orders_index():
     # 1️⃣ PRIMARY: R2
@@ -527,7 +594,7 @@ def register_order(order_id, email, files, product, quantity, ticket_numbers):
 
     save_email_index(email_index)
 
-def cleanup_old_orders(days=7):
+def cleanup_old_orders(days=CLEANUP_AFTER_DAYS):
     cutoff = datetime.utcnow().timestamp() - (days * 86400)
 
     for order_id in os.listdir(TICKET_STORAGE_DIR):
@@ -763,7 +830,15 @@ def send_ticket_file(order_id, enforce_limit=False):
                 with open(zip_path, "wb") as f:
                     f.write(zip_bytes)
 
-            # Single-ticket orders rely on cached or regenerated file
+            # 🔁 Attempt R2 recovery for single-ticket PDF
+            if order.get("quantity", 1) == 1:
+                filename = order["files"][0]
+                pdf_bytes = fetch_pdf_from_r2(order_id, filename)
+
+                if pdf_bytes:
+                    pdf_path = os.path.join(order_dir, filename)
+                    with open(pdf_path, "wb") as f:
+                        f.write(pdf_bytes)
             # (Frontend fix will ensure immediate download)
         else:
             return jsonify({"error": "Ticket not found"}), 404
@@ -978,6 +1053,9 @@ def generate_ticket():
             with open(file_path, "wb") as f:
                 f.write(pdf_bytes)
 
+            # ☁️ Persist single ticket to R2
+            upload_pdf_to_r2(order_id, file_name, pdf_bytes)
+
             # 🚀 Cache for fast download
             GENERATED_FILES[order_id] = {
                 "filename": file_name,
@@ -1138,6 +1216,15 @@ def redownload_ticket():
         return jsonify({"error": "Missing order_id"}), 400
 
     return send_ticket_file(order_id, enforce_limit=True)
+
+# --------------------------------------------------
+# ONE-TIME STARTUP CLEANUP (SAFE)
+# --------------------------------------------------
+try:
+    cleanup_old_orders()
+    cleanup_old_r2_objects()
+except Exception as e:
+    print("Startup cleanup skipped:", e)
 
 
 
