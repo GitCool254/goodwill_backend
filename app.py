@@ -834,22 +834,22 @@ def send_ticket_file(order_id, enforce_limit=False):
                     f.write(zip_bytes)
 
             # 🔁 Attempt R2 recovery for single-ticket PDF
-            pdf_bytes = None  # 🔒 ensure safe scope
-
             if order.get("quantity", 1) == 1:
                 filename = order["files"][0]
-                pdf_bytes = fetch_pdf_from_r2(order_id, filename)
+                pdf_path = os.path.join(order_dir, filename)
 
-                if pdf_bytes:
-                    pdf_path = os.path.join(order_dir, filename)
+                # Try R2 recovery only if file not already present
+                if not os.path.exists(pdf_path):
+                    pdf_bytes = fetch_pdf_from_r2(order_id, filename)
+
+                    if not pdf_bytes:
+                        return jsonify({
+                            "error": "TICKET_EXPIRED",
+                            "message": "This ticket has expired and is no longer available for download."
+                        }), 410
+
                     with open(pdf_path, "wb") as f:
                         f.write(pdf_bytes)
-
-            if order.get("quantity", 1) == 1 and not pdf_bytes:
-                return jsonify({
-                    "error": "TICKET_EXPIRED",
-                    "message": "This ticket has expired and is no longer available for download."
-                }), 410
 
 
             # (Frontend fix will ensure immediate download)
@@ -860,12 +860,6 @@ def send_ticket_file(order_id, enforce_limit=False):
             }), 404
 
         # Basic integrity check (ZIP magic header)
-
-        os.makedirs(order_dir, exist_ok=True)
-
-        zip_path = os.path.join(order_dir, f"RaffleTickets_{order_id}.zip")
-        with open(zip_path, "wb") as f:
-            f.write(zip_bytes)
 
     # ⚡ FAST PATH: single-ticket in-memory download
     cached = GENERATED_FILES.get(order_id)
