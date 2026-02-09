@@ -932,6 +932,10 @@ def send_ticket_file(order_id, enforce_limit=False):
 # --------------------------------------------------
 @app.route("/ticket_state", methods=["GET"])
 def ticket_state():
+    ok, err = verify_request_hmac(request)
+    if not ok:
+        return jsonify({"error": err}), 403
+
     state = apply_daily_decay_if_needed()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -952,6 +956,10 @@ def ticket_state():
 
 @app.route("/tickets_sold", methods=["GET"])
 def tickets_sold():
+    ok, err = verify_request_hmac(request)
+    if not ok:
+        return jsonify({"error": err}), 403
+
     """
     Frontend reads how many tickets are already sold.
     """
