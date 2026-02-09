@@ -861,6 +861,24 @@ def send_ticket_file(order_id, enforce_limit=False):
 
         # Basic integrity check (ZIP magic header)
 
+    # 🔒 Enforce max re-downloads (PDF + ZIP, including cached)
+    if enforce_limit:
+        counter_path = os.path.join(order_dir, "downloads.txt")
+        count = 0
+
+        if os.path.exists(counter_path):
+            with open(counter_path, "r") as f:
+                count = int(f.read().strip() or 0)
+
+        if count >= MAX_REDOWNLOADS:
+            return jsonify({
+                "error": "MAX_REDOWNLOADS_REACHED",
+                "message": "You have reached the maximum number of allowed re-downloads."
+            }), 403
+
+        with open(counter_path, "w") as f:
+            f.write(str(count + 1))
+
     # ⚡ FAST PATH: single-ticket in-memory download
     cached = GENERATED_FILES.get(order_id)
     if cached and cached["filename"].lower().endswith(".pdf"):
@@ -888,23 +906,6 @@ def send_ticket_file(order_id, enforce_limit=False):
         selected_file = pdf_files[0]  # Single-ticket case
     else:
         return jsonify({"error": "Unsupported ticket format"}), 404
-
-    if enforce_limit:
-        counter_path = os.path.join(order_dir, "downloads.txt")
-        count = 0
-
-        if os.path.exists(counter_path):
-            with open(counter_path, "r") as f:
-                count = int(f.read().strip() or 0)
-
-        if count >= MAX_REDOWNLOADS:
-            return jsonify({
-                "error": "MAX_REDOWNLOADS_REACHED",
-                "message": "You have reached the maximum number of allowed re-downloads."
-            }), 403
-
-        with open(counter_path, "w") as f:
-            f.write(str(count + 1))
 
     file_path = os.path.join(order_dir, selected_file)
 
