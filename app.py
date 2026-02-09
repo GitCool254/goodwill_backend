@@ -824,13 +824,18 @@ def send_ticket_file(order_id, enforce_limit=False):
                 zip_bytes = fetch_zip_from_r2(order_id)
 
                 if not zip_bytes:
-                    return jsonify({"error": "Ticket archive unavailable"}), 404
+                    return jsonify({
+                        "error": "TICKET_EXPIRED",
+                        "message": "This ticket has expired and is no longer available for download."
+                    }), 410
 
                 zip_path = os.path.join(order_dir, f"RaffleTickets_{order_id}.zip")
                 with open(zip_path, "wb") as f:
                     f.write(zip_bytes)
 
             # 🔁 Attempt R2 recovery for single-ticket PDF
+            pdf_bytes = None  # 🔒 ensure safe scope
+
             if order.get("quantity", 1) == 1:
                 filename = order["files"][0]
                 pdf_bytes = fetch_pdf_from_r2(order_id, filename)
@@ -839,9 +844,20 @@ def send_ticket_file(order_id, enforce_limit=False):
                     pdf_path = os.path.join(order_dir, filename)
                     with open(pdf_path, "wb") as f:
                         f.write(pdf_bytes)
+
+            if order.get("quantity", 1) == 1 and not pdf_bytes:
+                return jsonify({
+                    "error": "TICKET_EXPIRED",
+                    "message": "This ticket has expired and is no longer available for download."
+                }), 410
+
+
             # (Frontend fix will ensure immediate download)
         else:
-            return jsonify({"error": "Ticket not found"}), 404
+            return jsonify({
+                "error": "TICKET_NOT_FOUND",
+                "message": "We couldn’t find this ticket."
+            }), 404
 
         # Basic integrity check (ZIP magic header)
 
@@ -888,7 +904,10 @@ def send_ticket_file(order_id, enforce_limit=False):
                 count = int(f.read().strip() or 0)
 
         if count >= MAX_REDOWNLOADS:
-            return jsonify({"error": "Re-download limit reached"}), 403
+            return jsonify({
+                "error": "MAX_REDOWNLOADS_REACHED",
+                "message": "You have reached the maximum number of allowed re-downloads."
+            }), 403
 
         with open(counter_path, "w") as f:
             f.write(str(count + 1))
@@ -897,9 +916,15 @@ def send_ticket_file(order_id, enforce_limit=False):
 
     print("📦 Sending ticket file:", file_path)
 
+    # 🔎 Set correct mimetype (CRITICAL FIX)
+    if selected_file.lower().endswith(".pdf"):
+        mimetype = "application/pdf"
+    else:
+        mimetype = "application/zip"
+
     return Response(
         stream_file(file_path),
-        mimetype="application/zip",
+        mimetype=mimetype,
         headers={
             "Content-Disposition": f'attachment; filename="{selected_file}"',
             "Content-Length": os.path.getsize(file_path),
