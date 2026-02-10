@@ -15,12 +15,23 @@ from werkzeug.wsgi import FileWrapper
 import boto3
 from botocore.client import Config
 import math
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from time import time
 
 # --------------------------------------------------
 # APP SETUP
 # --------------------------------------------------
 
 app = Flask(__name__)
+
+# Rate limiter (per-IP)
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    default_limits=[]  # no global limits
+)
+
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 CORS(
@@ -319,7 +330,7 @@ MAX_REDOWNLOADS = 3
 # --------------------------------------------------
 # CLEANUP POLICY
 # --------------------------------------------------
-CLEANUP_AFTER_DAYS = 1
+CLEANUP_AFTER_DAYS = 10
 SECONDS_PER_DAY = 86400
 
 # --------------------------------------------------
@@ -336,7 +347,7 @@ MAX_PLACE_LENGTH = 45
 MAX_EXPAND_CHARS = 25
 EXPAND_PADDING = 6
 
-SECRET_KEY = os.environ.get("API_SIGN_SECRET", "goodwill_5490_secret")
+SECRET_KEY = os.environ.get("API_SIGN_SECRET")
 
 # --------------------------------------------------
 # HELPERS
@@ -930,26 +941,46 @@ def send_ticket_file(order_id, enforce_limit=False):
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
+
+# -------------------------
+# Simple in-memory caching
+# -------------------------
+CACHE_EXPIRY = 10  # seconds
+
+_ticket_state_cache = {
+    "data": None,
+    "timestamp": 0
+}
+
 @app.route("/ticket_state", methods=["GET"])
+@limiter.limit("5 per 10 seconds")  # max 5 requests per IP every 10 seconds
 def ticket_state():
+    now = time()
+    # serve cached response if within CACHE_EXPIRY
+    if _ticket_state_cache["data"] and now - _ticket_state_cache["timestamp"] < CACHE_EXPIRY:
+        return _ticket_state_cache["data"]
 
     state = apply_daily_decay_if_needed()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
     remaining = state.get("remaining")
-
-    # ✅ UI-friendly definition
     tickets_sold_ui = None
     if isinstance(remaining, int):
         tickets_sold_ui = max(INITIAL_TICKETS - remaining, 0)
 
-    return jsonify({
-        "remaining": remaining,                 # authoritative
-        "tickets_sold": tickets_sold_ui,         # ✅ FIXED VALUE
+    response = jsonify({
+        "remaining": remaining,
+        "tickets_sold": tickets_sold_ui,
         "last_calc_date": state.get("last_calc_date"),
         "initialized": state.get("initialized", False),
         "today": today
     }), 200
+
+    # update cache
+    _ticket_state_cache["data"] = response
+    _ticket_state_cache["timestamp"] = now
+
+    return response
 
 @app.route("/tickets_sold", methods=["GET"])
 def tickets_sold():
