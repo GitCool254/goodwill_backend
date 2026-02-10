@@ -932,8 +932,10 @@ def send_ticket_file(order_id, enforce_limit=False):
 # --------------------------------------------------
 @app.route("/ticket_state", methods=["GET"])
 def ticket_state():
+    verify_request_hmac(request)
 
-    state = apply_daily_decay_if_needed()
+    apply_daily_decay_if_needed()
+    state = read_state()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
     remaining = state.get("remaining")
