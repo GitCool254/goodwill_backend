@@ -957,10 +957,19 @@ _ticket_state_cache = {
 @limiter.limit("5 per 10 seconds")  # max 5 requests per IP every 10 seconds
 def ticket_state():
     now = time()
-    # serve cached response if within CACHE_EXPIRY
-    if _ticket_state_cache["data"] and now - _ticket_state_cache["timestamp"] < CACHE_EXPIRY:
-        return _ticket_state_cache["data"]
 
+    # -----------------------------
+    # CACHE HIT
+    # -----------------------------
+    if _ticket_state_cache["data"] and now - _ticket_state_cache["timestamp"] < CACHE_EXPIRY:
+        cached_resp, status = _ticket_state_cache["data"]
+        payload = cached_resp.get_json()
+        payload["cache"] = "HIT"
+        return jsonify(payload), status
+
+    # -----------------------------
+    # CACHE MISS (fresh compute)
+    # -----------------------------
     state = apply_daily_decay_if_needed()
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -969,13 +978,16 @@ def ticket_state():
     if isinstance(remaining, int):
         tickets_sold_ui = max(INITIAL_TICKETS - remaining, 0)
 
-    response = jsonify({
+    payload = {
         "remaining": remaining,
         "tickets_sold": tickets_sold_ui,
         "last_calc_date": state.get("last_calc_date"),
         "initialized": state.get("initialized", False),
-        "today": today
-    }), 200
+        "today": today,
+        "cache": "MISS"
+    }
+
+    response = jsonify(payload), 200
 
     # update cache
     _ticket_state_cache["data"] = response
