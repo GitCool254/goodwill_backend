@@ -27,10 +27,11 @@ app = Flask(__name__)
 
 # Rate limiter (per-IP)
 limiter = Limiter(
-    app,
     key_func=get_remote_address,
     default_limits=[]  # no global limits
 )
+
+limiter.init_app(app)
 
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
