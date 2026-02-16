@@ -225,7 +225,7 @@ def save_ticket_state(state):
 # --------------------------------------------------
 
 RAFFLE_START_DATE = "2026-02-02"
-SIMULATED_START_DATE = "2026-02-04"
+SIMULATED_START_DATE = "2026-02-14"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
 RAFFLE_ID = "goodwill-raffle-2026"
