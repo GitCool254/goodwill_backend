@@ -89,6 +89,14 @@ CORS(
                 "https://goodwillrafflestores.vercel.app",
             ]
         },
+
+        r"/sign_payload": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
     },
 )
 
@@ -631,11 +639,6 @@ def verify_signature(payload: str, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 def verify_request_hmac(req):
-    """
-    Enforces HMAC signature on JSON requests.
-    Works behind proxies too.
-    """
-    # fallback to proxy-prefixed headers
     signature = req.headers.get("X-Signature") or req.headers.get("HTTP_X_SIGNATURE")
     timestamp = req.headers.get("X-Timestamp") or req.headers.get("HTTP_X_TIMESTAMP")
 
@@ -650,8 +653,13 @@ def verify_request_hmac(req):
     except Exception:
         return False, "Invalid timestamp"
 
-    raw_body = req.get_data(as_text=True) or ""
-    payload = f"{timestamp}.{raw_body}"
+    # --- FIX: Use JSON parse + canonical dump instead of raw body ---
+    try:
+        data = req.get_json(force=True) or {}
+    except Exception:
+        return False, "Invalid JSON payload"
+
+    payload = f"{timestamp}.{json.dumps(data, separators=(',', ':'))}"
 
     if not verify_signature(payload, signature):
         return False, "Invalid signature"
