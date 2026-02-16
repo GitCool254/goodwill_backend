@@ -225,10 +225,10 @@ def save_ticket_state(state):
 # --------------------------------------------------
 
 RAFFLE_START_DATE = "2026-02-12"
-SIMULATED_START_DATE = "2026-02-14"
+SIMULATED_START_DATE = "2026-02-15"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
-RAFFLE_ID = "goodwill-raffle-2026"
+RAFFLE_ID = "goodwill-raffle-2026-round1"
 
 def seeded_random(seed: int) -> float:
     x = math.sin(seed) * 10000
