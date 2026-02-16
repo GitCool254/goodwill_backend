@@ -224,7 +224,7 @@ def save_ticket_state(state):
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
 
-RAFFLE_START_DATE = "2026-02-02"
+RAFFLE_START_DATE = "2026-02-12"
 SIMULATED_START_DATE = "2026-02-14"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
