@@ -953,6 +953,17 @@ _ticket_state_cache = {
     "timestamp": 0
 }
 
+
+@app.route("/sign_payload", methods=["POST"])
+def sign_payload():
+    data = request.get_json(force=True)
+    payload = json.dumps(data, separators=(',', ':'))  # canonical JSON
+    timestamp = str(int(datetime.utcnow().timestamp()))
+    message = f"{timestamp}.{payload}"
+    signature = hmac.new(SECRET_KEY.encode(), message.encode(), hashlib.sha256).hexdigest()
+    return jsonify({"signature": signature, "timestamp": timestamp})
+
+
 @app.route("/ticket_state", methods=["GET"])
 @limiter.limit("5 per 10 seconds")  # max 5 requests per IP every 10 seconds
 def ticket_state():
