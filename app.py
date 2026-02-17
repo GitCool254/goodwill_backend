@@ -358,12 +358,16 @@ EXPAND_PADDING = 6
 
 SECRET_KEY = os.environ.get("API_SIGN_SECRET")
 
+if not SECRET_KEY:
+    raise RuntimeError("API_SIGN_SECRET not set")
+
 # --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
 ORDERS_INDEX_FILE = os.path.join(TICKET_STORAGE_DIR, "orders.json")
 ORDERS_INDEX_KEY = "indexes/orders.json"
 EMAIL_INDEX_KEY = "indexes/email_orders.json"
+USED_ORDERS_KEY = "indexes/used_orders.json"
 
 # ===============================
 # Cloudflare R2 (Storage Only) Step 1R
@@ -588,6 +592,38 @@ def save_email_index(data):
         except Exception as e:
             print("R2 email index save failed:", e)
 
+def load_used_orders():
+    # 1️⃣ R2 PRIMARY
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=USED_ORDERS_KEY,
+            )
+            return set(json.loads(obj["Body"].read()))
+        except Exception:
+            pass
+
+    # 2️⃣ Fallback memory
+    return set()
+
+def save_used_orders(order_set):
+    payload = json.dumps(list(order_set), indent=2).encode()
+
+    # 1️⃣ R2 PRIMARY
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=USED_ORDERS_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 used_orders save failed:", e)
+
+    # 2️⃣ If R2 fails → memory only (do nothing)
 
 def register_order(order_id, email, files, product, quantity, ticket_numbers):
     index = load_orders_index()
@@ -676,7 +712,7 @@ PAYPAL_API_BASE = (
     else "https://api-m.sandbox.paypal.com"
 )
 
-USED_ORDERS = set()  # in-memory lock (OK for now)
+USED_ORDERS = load_used_orders()  # R2 primary, memory fallback
 
 GENERATED_FILES = {}  # order_id -> { filename, mimetype, data }
 MAX_CACHE_ITEMS = 100
@@ -717,6 +753,8 @@ def verify_paypal_order(order_id, expected_amount):
         return False, "Order already used"
 
     USED_ORDERS.add(order_id)
+    save_used_orders(USED_ORDERS)
+
     return True, None
 
 
@@ -947,6 +985,16 @@ def send_ticket_file(order_id, enforce_limit=False):
     )
 
 
+@app.before_request
+def enforce_https():
+    # Allow health checks internally
+    if request.endpoint == "health_check":
+        return
+
+    # Render sets X-Forwarded-Proto
+    if request.headers.get("X-Forwarded-Proto", "http") != "https":
+        return jsonify({"error": "HTTPS required"}), 403
+
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
@@ -963,6 +1011,7 @@ _ticket_state_cache = {
 
 
 @app.route("/sign_payload", methods=["POST"])
+@limiter.limit("20 per minute")
 def sign_payload():
     data = request.get_json(force=True)
     payload = json.dumps(data, separators=(',', ':'))  # canonical JSON
@@ -1025,6 +1074,7 @@ def tickets_sold():
     }), 200
 
 @app.route("/record_sale", methods=["POST"])
+@limiter.limit("5 per minute")
 def record_sale():
     ok, err = verify_request_hmac(request)
     if not ok:
@@ -1064,6 +1114,7 @@ def order_already_generated(order_id):
 
 
 @app.route("/generate_ticket", methods=["POST"])
+@limiter.limit("5 per minute")
 def generate_ticket():
     ok, err = verify_request_hmac(request)
     if not ok:
@@ -1239,6 +1290,7 @@ def generate_ticket():
 
 
 @app.route("/download_ticket", methods=["POST"])
+@limiter.limit("10 per minute")
 def download_ticket():
     ok, err = verify_request_hmac(request)
     if not ok:
@@ -1254,6 +1306,7 @@ def download_ticket():
 
 
 @app.route("/my_tickets", methods=["POST"])
+@limiter.limit("10 per minute")
 def my_tickets():
     ok, err = verify_request_hmac(request)
     if not ok:
@@ -1289,6 +1342,7 @@ def my_tickets():
 
 
 @app.route("/redownload_ticket", methods=["POST"])
+@limiter.limit("10 per minute")
 def redownload_ticket():
     ok, err = verify_request_hmac(request)
     if not ok:
