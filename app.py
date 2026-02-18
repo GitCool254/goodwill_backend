@@ -842,11 +842,17 @@ def verify_paypal_order(order_id, expected_amount):
         return False, f"Invalid currency ({currency})"
 
     # Validate receiver email (LIVE only)
-    payee = order["purchase_units"][0].get("payee", {})
-    receiver_email = payee.get("email_address")
+    if PAYPAL_MODE == "live":
+        payee = order["purchase_units"][0].get("payee", {})
+        receiver_email = payee.get("email_address")
 
-    if receiver_email and receiver_email != os.environ.get("PAYPAL_BUSINESS_EMAIL"):
-        return False, "Payment not sent to correct merchant"
+        expected_email = os.environ.get("PAYPAL_BUSINESS_EMAIL")
+
+        if not expected_email:
+            return False, "Merchant email not configured"
+
+        if receiver_email != expected_email:
+            return False, "Payment not sent to correct merchant"
 
     paid_amount = Decimal(
         order["purchase_units"][0]["amount"]["value"]
