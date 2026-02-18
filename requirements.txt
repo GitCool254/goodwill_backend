@@ -60,3 +60,4 @@ zopfli==0.2.3.post1
 PyMuPDF==1.22.5
 boto3==1.34.0
 Flask-Limiter==4.1.1
+filelock==3.24.2
