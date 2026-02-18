@@ -18,6 +18,8 @@ import math
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from time import time
+from filelock import FileLock
+
 
 # --------------------------------------------------
 # APP SETUP
@@ -175,6 +177,8 @@ def write_sales(total_sold):
 
 STATE_FILE = os.path.join(BASE_DIR, "ticket_state.json")
 STATE_KEY = "state/ticket_state.json"
+STATE_LOCK_FILE = STATE_FILE + ".lock"
+
 
 def load_ticket_state():
     """
@@ -276,53 +280,71 @@ def compute_total_decay(days_passed: int) -> int:
     return total
 
 def apply_daily_decay_if_needed():
-    state = load_ticket_state()
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    """
+    Authoritative daily decay.
+    Uses SAME lock as record_ticket_sale() to prevent race conditions.
+    Remaining can NEVER increase.
+    """
 
-    # Initialize or reconcile state (NEVER allow remaining to increase)
-    sold = read_sales()
-    max_allowed = max(INITIAL_TICKETS - sold, 0)
+    with FileLock(STATE_LOCK_FILE):
 
-    if not state.get("initialized"):
-        state["remaining"] = max_allowed
-        state["initialized"] = True
+        state = load_ticket_state()
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+
+        sold = read_sales()
+        max_allowed = max(INITIAL_TICKETS - sold, 0)
+
+        # -----------------------------
+        # INITIALIZE (first run ever)
+        # -----------------------------
+        if not state.get("initialized"):
+            state["remaining"] = max_allowed
+            state["initialized"] = True
+            state["last_calc_date"] = today
+            save_ticket_state(state)
+            return state
+
+        # -----------------------------
+        # HARD GUARD: NEVER increase
+        # -----------------------------
+        if state.get("remaining") is None or state["remaining"] > max_allowed:
+            state["remaining"] = max_allowed
+            save_ticket_state(state)
+
+        # Already processed today
+        if state.get("last_calc_date") == today:
+            return state
+
+        # Sold out guard
+        if int(state.get("remaining", 0)) <= 0:
+            state["remaining"] = 0
+            state["last_calc_date"] = today
+            save_ticket_state(state)
+            return state
+
+        # -----------------------------
+        # DECAY COMPUTATION
+        # -----------------------------
+        start_date_str = SIMULATED_START_DATE or RAFFLE_START_DATE
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        days_passed = max((datetime.utcnow() - start_date).days, 0)
+
+        total_decay = compute_total_decay(days_passed)
+
+        authoritative_remaining = max(
+            INITIAL_TICKETS - total_decay - sold,
+            0
+        )
+
+        # FINAL HARD GUARD (never increase)
+        if authoritative_remaining > state["remaining"]:
+            authoritative_remaining = state["remaining"]
+
+        state["remaining"] = authoritative_remaining
         state["last_calc_date"] = today
+
         save_ticket_state(state)
         return state
-
-    # 🔒 HARD GUARD: never allow remaining to go UP
-    if state.get("remaining") is None or state["remaining"] > max_allowed:
-        state["remaining"] = max_allowed
-        save_ticket_state(state)
-
-    # Already decayed today → do nothing
-    if state.get("last_calc_date") == today:
-        return state
-
-    # Stop if sold out
-    if int(state.get("remaining", 0)) <= 0:
-        state["remaining"] = 0
-        state["last_calc_date"] = today
-        save_ticket_state(state)
-        return state
-
-    start_date_str = SIMULATED_START_DATE or RAFFLE_START_DATE
-    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-    days_passed = max((datetime.utcnow() - start_date).days, 0)
-
-    total_decay = compute_total_decay(days_passed)
-    sold = read_sales()
-
-    authoritative_remaining = max(
-        INITIAL_TICKETS - total_decay - sold,
-        0
-    )
-
-    state["remaining"] = authoritative_remaining
-    state["last_calc_date"] = today
-
-    save_ticket_state(state)
-    return state
 
 # --------------------------------------------------
 # PERSISTENT TICKET STORAGE
@@ -393,35 +415,40 @@ if all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
 print("🟢 R2 ENABLED:", bool(r2_client))
 
 def record_ticket_sale(quantity: int):
-    # 1️⃣ Update persistent sales ledger
-    current_sold = read_sales()
-    new_total = current_sold + quantity
-    write_sales(new_total)
+    """
+    Safely update tickets sold and remaining tickets.
+    Uses a file lock to prevent concurrent oversell.
+    """
+    with FileLock(STATE_LOCK_FILE):
+        # 1️⃣ Update persistent sales ledger
+        current_sold = read_sales()
+        new_total = current_sold + quantity
+        write_sales(new_total)
 
-    # 2️⃣ Load authoritative ticket state
-    state = load_ticket_state()
+        # 2️⃣ Load authoritative ticket state
+        state = load_ticket_state()
 
-    # 3️⃣ Initialize state if first sale ever
-    if not state.get("initialized"):
-        state["remaining"] = max(INITIAL_TICKETS - current_sold, 0)
-        state["initialized"] = True
+        # 3️⃣ Initialize state if first sale ever
+        if not state.get("initialized"):
+            state["remaining"] = max(INITIAL_TICKETS - current_sold, 0)
+            state["initialized"] = True
 
-    remaining = int(state.get("remaining", 0))
+        remaining = int(state.get("remaining", 0))
 
-    # 4️⃣ Hard stop if not enough tickets
-    if remaining < quantity:
-        raise ValueError("Not enough tickets remaining")
+        # 4️⃣ Hard stop if not enough tickets
+        if remaining < quantity:
+            raise ValueError("Not enough tickets remaining")
 
-    # 5️⃣ 🔥 Burn tickets immediately (THIS IS THE HACK)
-    state["remaining"] = remaining - quantity
+        # 5️⃣ Burn tickets immediately
+        state["remaining"] = remaining - quantity
 
-    # 6️⃣ 🔒 Lock today so decay CANNOT run again today
-    state["last_calc_date"] = datetime.utcnow().strftime("%Y-%m-%d")
+        # 6️⃣ Lock today so decay cannot run again today
+        state["last_calc_date"] = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # 7️⃣ Persist state
-    save_ticket_state(state)
+        # 7️⃣ Persist state
+        save_ticket_state(state)
 
-    print(f"📈 Tickets sold: +{quantity}, remaining {state['remaining']}")
+        print(f"📈 Tickets sold: +{quantity}, remaining {state['remaining']}")
 
 
 # Step 2R
@@ -675,21 +702,27 @@ def verify_signature(payload: str, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 def verify_request_hmac(req):
+    global USED_NONCES, REPLAY_BOUNCE_COUNT
+
     signature = req.headers.get("X-Signature") or req.headers.get("HTTP_X_SIGNATURE")
     timestamp = req.headers.get("X-Timestamp") or req.headers.get("HTTP_X_TIMESTAMP")
+    nonce = req.headers.get("X-Nonce")
 
-    if not signature or not timestamp:
-        return False, "Missing signature headers"
+    if not signature or not timestamp or not nonce:
+        return False, "Missing security headers"
 
+    # ⏱ Timestamp validation
     try:
         ts = int(timestamp)
         now = int(datetime.utcnow().timestamp())
-        if abs(now - ts) > 300:
+
+        if abs(now - ts) > NONCE_EXPIRY_SECONDS:
             return False, "Request expired"
+
     except Exception:
         return False, "Invalid timestamp"
 
-    # --- FIX: Use JSON parse + canonical dump instead of raw body ---
+    # 🔒 Canonical JSON payload
     try:
         data = req.get_json(force=True) or {}
     except Exception:
@@ -699,6 +732,29 @@ def verify_request_hmac(req):
 
     if not verify_signature(payload, signature):
         return False, "Invalid signature"
+
+    # ==================================================
+    # 🔥 TRUE REPLAY PROTECTION
+    # ==================================================
+
+    # Cleanup expired nonces
+    expired = []
+    for n, stored_ts in USED_NONCES.items():
+        if now - stored_ts > NONCE_EXPIRY_SECONDS:
+            expired.append(n)
+
+    for n in expired:
+        del USED_NONCES[n]
+
+    # Replay detection
+    if nonce in USED_NONCES:
+        REPLAY_BOUNCE_COUNT += 1
+        print(f"🚨 Replay detected | Total bounces: {REPLAY_BOUNCE_COUNT}")
+        return False, "Replay detected"
+
+    # Store nonce
+    USED_NONCES[nonce] = ts
+    save_used_nonces(USED_NONCES)
 
     return True, None
 
@@ -713,6 +769,43 @@ PAYPAL_API_BASE = (
 )
 
 USED_ORDERS = load_used_orders()  # R2 primary, memory fallback
+
+# ==================================================
+# TRUE ANTI-REPLAY PROTECTION (R2 PERSISTENT)
+# ==================================================
+
+NONCE_INDEX_KEY = "security/used_nonces.json"
+NONCE_EXPIRY_SECONDS = 300  # 5 minutes
+
+def load_used_nonces():
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=NONCE_INDEX_KEY,
+            )
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+    return {}
+
+def save_used_nonces(data):
+    payload = json.dumps(data, indent=2).encode()
+
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=NONCE_INDEX_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("Nonce save failed:", e)
+
+USED_NONCES = load_used_nonces()
+REPLAY_BOUNCE_COUNT = 0
 
 GENERATED_FILES = {}  # order_id -> { filename, mimetype, data }
 MAX_CACHE_ITEMS = 100
