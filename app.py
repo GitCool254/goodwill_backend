@@ -836,6 +836,25 @@ def verify_paypal_order(order_id, expected_amount):
     if order.get("status") != "COMPLETED":
         return False, "Payment not completed"
 
+    # Validate capture details (extra security)
+    payments = order["purchase_units"][0].get("payments", {})
+    captures = payments.get("captures", [])
+
+    if not captures:
+        return False, "No capture found"
+
+    capture = captures[0]
+
+    if capture.get("status") != "COMPLETED":
+        return False, "Payment not captured"
+
+    capture_amount = Decimal(
+        capture["amount"]["value"]
+    ).quantize(Decimal("0.01"))
+
+    if capture_amount != expected_amount:
+        return False, "Captured amount mismatch"
+
     # Validate currency
     currency = order["purchase_units"][0]["amount"]["currency_code"]
     if currency != "USD":
