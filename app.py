@@ -829,8 +829,24 @@ def verify_paypal_order(order_id, expected_amount):
 
     order = r.json()
 
+    # Validate intent
+    if order.get("intent") != "CAPTURE":
+        return False, "Invalid PayPal intent"
+
     if order.get("status") != "COMPLETED":
         return False, "Payment not completed"
+
+    # Validate currency
+    currency = order["purchase_units"][0]["amount"]["currency_code"]
+    if currency != "USD":
+        return False, f"Invalid currency ({currency})"
+
+    # Validate receiver email (LIVE only)
+    payee = order["purchase_units"][0].get("payee", {})
+    receiver_email = payee.get("email_address")
+
+    if receiver_email and receiver_email != os.environ.get("PAYPAL_BUSINESS_EMAIL"):
+        return False, "Payment not sent to correct merchant"
 
     paid_amount = Decimal(
         order["purchase_units"][0]["amount"]["value"]
