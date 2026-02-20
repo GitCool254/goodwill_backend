@@ -6,7 +6,6 @@ import io
 import random
 import zipfile
 import os
-import hmac
 import hashlib
 import requests
 import json
@@ -85,14 +84,6 @@ CORS(
             ]
         },
         r"/tickets_sold": {
-            "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
-                "https://goodwillrafflestore.onrender.com",
-                "https://goodwillrafflestores.vercel.app",
-            ]
-        },
-
-        r"/sign_payload": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
@@ -694,69 +685,6 @@ def cleanup_old_orders(days=CLEANUP_AFTER_DAYS):
         except Exception as e:
             print("Cleanup error:", e)
 
-def verify_signature(payload: str, signature: str) -> bool:
-    expected = hmac.new(
-        SECRET_KEY.encode(), payload.encode(), hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(expected, signature)
-
-def verify_request_hmac(req):
-    global USED_NONCES, REPLAY_BOUNCE_COUNT
-
-    signature = req.headers.get("X-Signature") or req.headers.get("HTTP_X_SIGNATURE")
-    timestamp = req.headers.get("X-Timestamp") or req.headers.get("HTTP_X_TIMESTAMP")
-    nonce = req.headers.get("X-Nonce")
-
-    if not signature or not timestamp or not nonce:
-        return False, "Missing security headers"
-
-    # ⏱ Timestamp validation
-    try:
-        ts = int(timestamp)
-        now = int(datetime.utcnow().timestamp())
-
-        if abs(now - ts) > NONCE_EXPIRY_SECONDS:
-            return False, "Request expired"
-
-    except Exception:
-        return False, "Invalid timestamp"
-
-    # 🔒 Canonical JSON payload
-    try:
-        data = req.get_json(force=True) or {}
-    except Exception:
-        return False, "Invalid JSON payload"
-
-    payload = f"{timestamp}.{json.dumps(data, separators=(',', ':'))}"
-
-    if not verify_signature(payload, signature):
-        return False, "Invalid signature"
-
-    # ==================================================
-    # 🔥 TRUE REPLAY PROTECTION
-    # ==================================================
-
-    # Cleanup expired nonces
-    expired = []
-    for n, stored_ts in USED_NONCES.items():
-        if now - stored_ts > NONCE_EXPIRY_SECONDS:
-            expired.append(n)
-
-    for n in expired:
-        del USED_NONCES[n]
-
-    # Replay detection
-    if nonce in USED_NONCES:
-        REPLAY_BOUNCE_COUNT += 1
-        print(f"🚨 Replay detected | Total bounces: {REPLAY_BOUNCE_COUNT}")
-        return False, "Replay detected"
-
-    # Store nonce
-    USED_NONCES[nonce] = ts
-    save_used_nonces(USED_NONCES)
-
-    return True, None
 
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID")
 PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET")
@@ -1129,6 +1057,44 @@ def enforce_https():
     if request.headers.get("X-Forwarded-Proto", "http") != "https":
         return jsonify({"error": "HTTPS required"}), 403
 
+def verify_request_nonce(req):
+    """
+    Backend-only replay protection using nonces and timestamp
+    """
+    global USED_NONCES, REPLAY_BOUNCE_COUNT
+
+    timestamp = req.headers.get("X-Timestamp")
+    nonce = req.headers.get("X-Nonce")
+
+    if not timestamp or not nonce:
+        return False, "Missing security headers"
+    
+    # Timestamp validation (5-minute expiry)
+    try:
+        ts = int(timestamp)
+        now = int(datetime.utcnow().timestamp())
+        if abs(now - ts) > NONCE_EXPIRY_SECONDS:
+            return False, "Request expired"
+    except:
+        return False, "Invalid timestamp"
+    
+    # Cleanup expired nonces
+    expired = [n for n, stored_ts in USED_NONCES.items() if now - stored_ts > NONCE_EXPIRY_SECONDS]
+    for n in expired:
+        del USED_NONCES[n]
+    
+    # Replay detection
+    if nonce in USED_NONCES:
+        REPLAY_BOUNCE_COUNT += 1
+        print(f"🚨 Replay detected | Total bounces: {REPLAY_BOUNCE_COUNT}")
+        return False, "Replay detected"
+    
+    # Store nonce
+    USED_NONCES[nonce] = ts
+    save_used_nonces(USED_NONCES)
+ 
+    return True, None
+
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
@@ -1142,17 +1108,6 @@ _ticket_state_cache = {
     "data": None,
     "timestamp": 0
 }
-
-
-@app.route("/sign_payload", methods=["POST"])
-@limiter.limit("20 per minute")
-def sign_payload():
-    data = request.get_json(force=True)
-    payload = json.dumps(data, separators=(',', ':'))  # canonical JSON
-    timestamp = str(int(datetime.utcnow().timestamp()))
-    message = f"{timestamp}.{payload}"
-    signature = hmac.new(SECRET_KEY.encode(), message.encode(), hashlib.sha256).hexdigest()
-    return jsonify({"signature": signature, "timestamp": timestamp})
 
 
 @app.route("/ticket_state", methods=["GET"])
@@ -1198,6 +1153,7 @@ def ticket_state():
     return response
 
 @app.route("/tickets_sold", methods=["GET"])
+@limiter.limit("5 per 10 seconds")
 def tickets_sold():
 
     """
@@ -1210,7 +1166,7 @@ def tickets_sold():
 @app.route("/record_sale", methods=["POST"])
 @limiter.limit("5 per minute")
 def record_sale():
-    ok, err = verify_request_hmac(request)
+    ok, err = verify_request_nonce(request)
     if not ok:
         return jsonify({"error": err}), 403
 
@@ -1250,9 +1206,9 @@ def order_already_generated(order_id):
 @app.route("/generate_ticket", methods=["POST"])
 @limiter.limit("5 per minute")
 def generate_ticket():
-    ok, err = verify_request_hmac(request)
+    ok, err = verify_request_nonce(request)
     if not ok:
-        return jsonify({"error": err}), 403
+        return jsonify({"error": err}), 403 
 
     data = request.get_json(force=True)
 
@@ -1426,7 +1382,7 @@ def generate_ticket():
 @app.route("/download_ticket", methods=["POST"])
 @limiter.limit("10 per minute")
 def download_ticket():
-    ok, err = verify_request_hmac(request)
+    ok, err = verify_request_nonce(request)
     if not ok:
         return jsonify({"error": err}), 403
 
@@ -1442,7 +1398,7 @@ def download_ticket():
 @app.route("/my_tickets", methods=["POST"])
 @limiter.limit("10 per minute")
 def my_tickets():
-    ok, err = verify_request_hmac(request)
+    ok, err = verify_request_nonce(request)
     if not ok:
         return jsonify({"error": err}), 403
 
@@ -1478,7 +1434,7 @@ def my_tickets():
 @app.route("/redownload_ticket", methods=["POST"])
 @limiter.limit("10 per minute")
 def redownload_ticket():
-    ok, err = verify_request_hmac(request)
+    ok, err = verify_request_nonce(request)
     if not ok:
         return jsonify({"error": err}), 403
 
