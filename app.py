@@ -18,7 +18,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from time import time
 from filelock import FileLock
-
+import secrets
 
 # --------------------------------------------------
 # APP SETUP
@@ -29,7 +29,7 @@ app = Flask(__name__)
 # Rate limiter (per-IP)
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=[]  # no global limits
+    default_limits=["200 per hour"]  # no global limits
 )
 
 limiter.init_app(app)
@@ -610,36 +610,43 @@ def save_email_index(data):
         except Exception as e:
             print("R2 email index save failed:", e)
 
-def load_used_orders():
-    # 1️⃣ R2 PRIMARY
-    if r2_client:
-        try:
-            obj = r2_client.get_object(
-                Bucket=R2_BUCKET_NAME,
-                Key=USED_ORDERS_KEY,
-            )
-            return set(json.loads(obj["Body"].read()))
-        except Exception:
-            pass
+def load_used_orders_with_etag():
+    if not r2_client:
+        return set(), None
 
-    # 2️⃣ Fallback memory
-    return set()
+    try:
+        obj = r2_client.get_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=USED_ORDERS_KEY,
+        )
+        etag = obj.get("ETag")
+        data = set(json.loads(obj["Body"].read()))
+        return data, etag
+    except Exception:
+        return set(), None
 
-def save_used_orders(order_set):
+def save_used_orders_with_etag(order_set, etag):
     payload = json.dumps(list(order_set), indent=2).encode()
 
-    # 1️⃣ R2 PRIMARY
-    if r2_client:
-        try:
+    try:
+        if etag:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=USED_ORDERS_KEY,
+                Body=payload,
+                ContentType="application/json",
+                IfMatch=etag,
+            )
+        else:
             r2_client.put_object(
                 Bucket=R2_BUCKET_NAME,
                 Key=USED_ORDERS_KEY,
                 Body=payload,
                 ContentType="application/json",
             )
-            return
-        except Exception as e:
-            print("R2 used_orders save failed:", e)
+        return True
+    except Exception:
+        return False
 
     # 2️⃣ If R2 fails → memory only (do nothing)
 
@@ -696,7 +703,6 @@ PAYPAL_API_BASE = (
     else "https://api-m.sandbox.paypal.com"
 )
 
-USED_ORDERS = load_used_orders()  # R2 primary, memory fallback
 
 # ==================================================
 # TRUE ANTI-REPLAY PROTECTION (R2 PERSISTENT)
@@ -732,7 +738,6 @@ def save_used_nonces(data):
         except Exception as e:
             print("Nonce save failed:", e)
 
-USED_NONCES = load_used_nonces()
 REPLAY_BOUNCE_COUNT = 0
 
 GENERATED_FILES = {}  # order_id -> { filename, mimetype, data }
@@ -811,17 +816,25 @@ def verify_paypal_order(order_id, expected_amount):
             f"Amount mismatch (paid {paid_amount}, expected {expected_amount})",
         )
 
-    if order_id in USED_ORDERS:
-        return False, "Order already used"
+    # 🔒 ATOMIC USED ORDER CHECK
+    for _ in range(3):
+        used_orders, etag = load_used_orders_with_etag()
 
-    USED_ORDERS.add(order_id)
-    save_used_orders(USED_ORDERS)
+        if order_id in used_orders:
+            return False, "Order already used"
 
-    return True, None
+        used_orders.add(order_id)
+
+        if save_used_orders_with_etag(used_orders, etag):
+            break
+    else:
+        return False, "Order verification conflict"
+
+        return True, None
 
 
 def generate_ticket_no():
-    return f"GWS-{random.randint(100000, 999999)}"
+    return f"GWS-{secrets.randbelow(900000) + 100000}"
 
 
 def generate_ticket_with_placeholders(
@@ -1058,41 +1071,36 @@ def enforce_https():
         return jsonify({"error": "HTTPS required"}), 403
 
 def verify_request_nonce(req):
-    """
-    Backend-only replay protection using nonces and timestamp
-    """
-    global USED_NONCES, REPLAY_BOUNCE_COUNT
-
     timestamp = req.headers.get("X-Timestamp")
     nonce = req.headers.get("X-Nonce")
 
     if not timestamp or not nonce:
         return False, "Missing security headers"
-    
-    # Timestamp validation (5-minute expiry)
+
     try:
         ts = int(timestamp)
         now = int(datetime.utcnow().timestamp())
         if abs(now - ts) > NONCE_EXPIRY_SECONDS:
             return False, "Request expired"
-    except:
+    except Exception:
         return False, "Invalid timestamp"
-    
-    # Cleanup expired nonces
-    expired = [n for n, stored_ts in USED_NONCES.items() if now - stored_ts > NONCE_EXPIRY_SECONDS]
-    for n in expired:
-        del USED_NONCES[n]
-    
-    # Replay detection
-    if nonce in USED_NONCES:
-        REPLAY_BOUNCE_COUNT += 1
-        print(f"🚨 Replay detected | Total bounces: {REPLAY_BOUNCE_COUNT}")
-        return False, "Replay detected"
-    
-    # Store nonce
-    USED_NONCES[nonce] = ts
-    save_used_nonces(USED_NONCES)
- 
+
+    # 🔒 ATOMIC SECTION
+    with FileLock(STATE_LOCK_FILE + ".nonce"):
+        nonces = load_used_nonces()
+
+        # Cleanup expired
+        nonces = {
+            n: t for n, t in nonces.items()
+            if now - t <= NONCE_EXPIRY_SECONDS
+        }
+
+        if nonce in nonces:
+            return False, "Replay detected"
+
+        nonces[nonce] = ts
+        save_used_nonces(nonces)
+
     return True, None
 
 # --------------------------------------------------
@@ -1163,31 +1171,6 @@ def tickets_sold():
         "total_sold": read_sales()
     }), 200
 
-@app.route("/record_sale", methods=["POST"])
-@limiter.limit("5 per minute")
-def record_sale():
-    ok, err = verify_request_nonce(request)
-    if not ok:
-        return jsonify({"error": err}), 403
-
-    data = request.get_json(force=True)
-    tickets_bought = int(data.get("tickets", 0))
-
-    if tickets_bought <= 0:
-        return jsonify({"error": "Invalid ticket count"}), 400
-
-    # 🔒 Authoritative update (sales + remaining)
-    try:
-        record_ticket_sale(tickets_bought)
-    except ValueError:
-        return jsonify({"error": "Tickets sold out"}), 409
-
-    return jsonify({
-        "success": True,
-        "tickets_bought": tickets_bought,
-        "total_sold": read_sales()
-    }), 200
-
 @app.route("/", methods=["GET"])
 def health_check():
     return jsonify({
@@ -1217,6 +1200,10 @@ def generate_ticket():
 
     try:
         quantity = int(data.get("quantity", 1))
+
+        if quantity < 1 or quantity > 10:
+            return jsonify({"error": "Invalid quantity"}), 400
+
     except BaseException:
         return jsonify({"error": "Invalid quantity"}), 400
 
@@ -1248,6 +1235,12 @@ def generate_ticket():
 
     if not ok:
         return jsonify({"error": err}), 403
+
+    # 🔥 CRITICAL FIX — Reserve tickets BEFORE generating files
+    try:
+        record_ticket_sale(quantity)
+    except ValueError:
+        return jsonify({"error": "Tickets sold out"}), 409
 
     if len(full_name) > MAX_NAME_LENGTH:
         full_name = full_name[:MAX_NAME_LENGTH] + "…"
@@ -1300,8 +1293,6 @@ def generate_ticket():
                 quantity=1,
                 ticket_numbers=[ticket_no],
             )
-
-            record_ticket_sale(1)
 
             # cleanup_old_orders()
 
@@ -1357,11 +1348,6 @@ def generate_ticket():
             quantity=quantity,
             ticket_numbers=ticket_numbers,
         )
-
-        try:
-            record_ticket_sale(quantity)
-        except ValueError:
-            return jsonify({"error": "Tickets sold out"}), 409
 
         # cleanup_old_orders()
 
