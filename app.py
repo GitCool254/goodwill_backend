@@ -17,6 +17,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from time import time
 from filelock import FileLock
+import re
+import uuid
 
 # --------------------------------------------------
 # APP SETUP
@@ -166,7 +168,7 @@ STATE_FILE = os.path.join(BASE_DIR, "ticket_state.json")
 
 STATE_KEY = "state/ticket_state.json"
 STATE_LOCK_FILE = STATE_FILE + ".lock"
-
+NONCE_LOCK_FILE = os.path.join(BASE_DIR, "nonce.lock")
 
 def load_ticket_state():
     """Persistent authoritative remaining ticket state.
@@ -363,11 +365,6 @@ MAX_PLACE_LENGTH = 45
 MAX_EXPAND_CHARS = 25
 EXPAND_PADDING = 6
 
-SECRET_KEY = os.environ.get("API_SIGN_SECRET")
-
-if not SECRET_KEY:
-    raise RuntimeError("API_SIGN_SECRET not set")
-
 # --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
@@ -404,37 +401,28 @@ print("🟢 R2 ENABLED:", bool(r2_client))
 
 
 def record_ticket_sale(quantity: int):
-    """
-    Safely update tickets sold and remaining tickets.
-    Uses a file lock to prevent concurrent oversell.
-    """
-    with FileLock(STATE_LOCK_FILE):
-        # 1️⃣ Update persistent sales ledger
-        current_sold = read_sales()
-        new_total = current_sold + quantity
-        write_sales(new_total)
 
-        # 2️⃣ Load authoritative ticket state
+    with FileLock(STATE_LOCK_FILE):
+
         state = load_ticket_state()
-        # 3️⃣ Initialize state if first sale ever
+
         if not state.get("initialized"):
-            state["remaining"] = max(INITIAL_TICKETS - current_sold, 0)
+            state["remaining"] = INITIAL_TICKETS
             state["initialized"] = True
 
         remaining = int(state.get("remaining", 0))
 
-        # 4️⃣ Hard stop if not enough tickets
         if remaining < quantity:
             raise ValueError("Not enough tickets remaining")
 
-        # 5️⃣ Burn tickets immediately
+        # Burn first
         state["remaining"] = remaining - quantity
-
-        # 6️⃣ Lock today so decay cannot run again today
         state["last_calc_date"] = datetime.utcnow().strftime("%Y-%m-%d")
-
-        # 7️⃣ Persist state
         save_ticket_state(state)
+
+        # Then update ledger
+        current_sold = read_sales()
+        write_sales(current_sold + quantity)
 
         print(f"📈 Tickets sold: +{quantity}, remaining {state['remaining']}")
 
@@ -669,6 +657,13 @@ def register_order(order_id, email, files, product, quantity, ticket_numbers):
 
     save_email_index(email_index)
 
+def validate_order_id(order_id):
+    if not isinstance(order_id, str):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9\-]{10,50}", order_id):
+        return False
+    return True
+
 
 def cleanup_old_orders(days=CLEANUP_AFTER_DAYS):
     cutoff = datetime.utcnow().timestamp() - (days * 86400)
@@ -775,7 +770,16 @@ def verify_paypal_order(order_id, expected_amount):
     if not captures:
         return False, "No capture found"
 
-    capture = captures[0]
+    valid_capture = None
+    for cap in captures:
+        if cap.get("status") == "COMPLETED":
+            valid_capture = cap
+            break
+
+    if not valid_capture:
+        return False, "No completed capture found"
+
+    capture = valid_capture
 
     if capture.get("status") != "COMPLETED":
         return False, "Payment not captured"
@@ -824,7 +828,7 @@ def verify_paypal_order(order_id, expected_amount):
 
 
 def generate_ticket_no():
-    return f"GWS-{random.randint(100000, 999999)}"
+    return f"GWS-{uuid.uuid4().hex[:8].upper()}"
 
 
 def generate_ticket_with_placeholders(
@@ -1085,44 +1089,37 @@ def enforce_https():
 
 
 def verify_request_nonce(req):
-    """
-    Backend-only replay protection using nonces and timestamp
-    """
-    global USED_NONCES, REPLAY_BOUNCE_COUNT
-
     timestamp = req.headers.get("X-Timestamp")
     nonce = req.headers.get("X-Nonce")
 
     if not timestamp or not nonce:
         return False, "Missing security headers"
 
-    # Timestamp validation (5-minute expiry)
     try:
         ts = int(timestamp)
         now = int(datetime.utcnow().timestamp())
         if abs(now - ts) > NONCE_EXPIRY_SECONDS:
             return False, "Request expired"
-    except BaseException:
+    except Exception:
         return False, "Invalid timestamp"
 
-    # Cleanup expired nonces
-    expired = [
-        n
-        for n, stored_ts in USED_NONCES.items()
-        if now - stored_ts > NONCE_EXPIRY_SECONDS
-    ]
-    for n in expired:
-        del USED_NONCES[n]
+    with FileLock(NONCE_LOCK_FILE):
 
-    # Replay detection
-    if nonce in USED_NONCES:
-        REPLAY_BOUNCE_COUNT += 1
-        print(f"🚨 Replay detected | Total bounces: {REPLAY_BOUNCE_COUNT}")
-        return False, "Replay detected"
+        used_nonces = load_used_nonces()
 
-    # Store nonce
-    USED_NONCES[nonce] = ts
-    save_used_nonces(USED_NONCES)
+        # Cleanup expired
+        expired = [
+            n for n, stored_ts in used_nonces.items()
+            if now - stored_ts > NONCE_EXPIRY_SECONDS
+        ]
+        for n in expired:
+            del used_nonces[n]
+
+        if nonce in used_nonces:
+            return False, "Replay detected"
+
+        used_nonces[nonce] = ts
+        save_used_nonces(used_nonces)
 
     return True, None
 
@@ -1195,38 +1192,6 @@ def tickets_sold():
     """
     return jsonify({"total_sold": read_sales()}), 200
 
-
-@app.route("/record_sale", methods=["POST"])
-@limiter.limit("5 per minute")
-def record_sale():
-    ok, err = verify_request_nonce(request)
-    if not ok:
-        return jsonify({"error": err}), 403
-
-    data = request.get_json(force=True)
-    tickets_bought = int(data.get("tickets", 0))
-
-    if tickets_bought <= 0:
-        return jsonify({"error": "Invalid ticket count"}), 400
-
-    # 🔒 Authoritative update (sales + remaining)
-    try:
-        record_ticket_sale(tickets_bought)
-    except ValueError:
-        return jsonify({"error": "Tickets sold out"}), 409
-
-    return (
-        jsonify(
-            {
-                "success": True,
-                "tickets_bought": tickets_bought,
-                "total_sold": read_sales(),
-            }
-        ),
-        200,
-    )
-
-
 @app.route("/", methods=["GET"])
 def health_check():
     return (
@@ -1258,6 +1223,9 @@ def generate_ticket():
     full_name = data.get("name", "").strip()
     event_place = data.get("event_place", EVENT_PLACE).strip()
 
+    if len(event_place) > MAX_PLACE_LENGTH:
+        event_place = event_place[:MAX_PLACE_LENGTH] + "…"
+
     try:
         quantity = int(data.get("quantity", 1))
     except BaseException:
@@ -1280,6 +1248,9 @@ def generate_ticket():
         return jsonify({"error": "Missing email"}), 400
 
     order_id = data.get("order_id")
+
+    if not validate_order_id(order_id):
+        return jsonify({"error": "Invalid order ID"}), 400
 
     if not order_id:
         return jsonify({"error": "Missing PayPal order ID"}), 400
@@ -1431,6 +1402,10 @@ def download_ticket():
 
     data = request.get_json(force=True)
     order_id = data.get("order_id")
+
+    if not validate_order_id(order_id):
+        return jsonify({"error": "Invalid order ID"}), 400
+
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
 
@@ -1484,6 +1459,9 @@ def redownload_ticket():
 
     data = request.get_json(force=True)
     order_id = data.get("order_id")
+
+    if not validate_order_id(order_id):
+        return jsonify({"error": "Invalid order ID"}), 400
 
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
