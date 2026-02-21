@@ -92,6 +92,9 @@ CORS(
     },
 )
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
+
 # Service account key (already in your Termux setup)
 GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
 GSHEET_ID = os.environ.get("GSHEET_ID")  # set your Google Sheet ID in env
@@ -160,9 +163,6 @@ def log_to_google_sheet_with_retry(full_name, email, ticket_numbers, amount, ord
 # --------------------------------------------------
 # PATHS
 # --------------------------------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateN.pdf")
 
 
 # --------------------------------------------------
