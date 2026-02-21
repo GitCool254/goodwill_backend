@@ -142,7 +142,7 @@ def log_to_google_sheet(full_name, email, ticket_numbers, amount, order_id):
         print(f"✅ Logged order {order_id} to Google Sheet")
     except Exception as e:
         print("❌ Failed to log to Google Sheet:", e)
-        raise
+
 
 MAX_SHEET_RETRIES = 3
 SHEET_RETRY_DELAY = 1  # seconds
