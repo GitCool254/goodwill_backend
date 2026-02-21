@@ -102,6 +102,9 @@ GSHEET_ID = os.environ.get("GSHEET_ID")  # set your Google Sheet ID in env
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 GSHEET_KEY_JSON = os.environ.get("GSHEET_KEY_JSON")
+print("GSHEET_KEY_JSON exists:", bool(GSHEET_KEY_JSON))
+print("GSHEET_ID:", GSHEET_ID)
+
 credentials = service_account.Credentials.from_service_account_info(
     json.loads(GSHEET_KEY_JSON),
     scopes=SCOPES
@@ -139,6 +142,7 @@ def log_to_google_sheet(full_name, email, ticket_numbers, amount, order_id):
         print(f"✅ Logged order {order_id} to Google Sheet")
     except Exception as e:
         print("❌ Failed to log to Google Sheet:", e)
+        raise
 
 MAX_SHEET_RETRIES = 3
 SHEET_RETRY_DELAY = 1  # seconds
