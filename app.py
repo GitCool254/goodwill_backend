@@ -101,9 +101,12 @@ GSHEET_ID = os.environ.get("GSHEET_ID")  # set your Google Sheet ID in env
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-credentials = service_account.Credentials.from_service_account_file(
-    GSHEET_KEY_FILE, scopes=SCOPES
+GSHEET_KEY_JSON = os.environ.get("GSHEET_KEY_JSON")
+credentials = service_account.Credentials.from_service_account_info(
+    json.loads(GSHEET_KEY_JSON),
+    scopes=SCOPES
 )
+
 sheets_service = build("sheets", "v4", credentials=credentials)
 
 
