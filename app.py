@@ -294,6 +294,101 @@ def save_ticket_state(state):
         f.write(payload.decode())
 
 
+def load_raffle_meta():
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=RAFFLE_META_KEY,
+            )
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+
+    # 2️⃣ Local fallback
+    if os.path.exists(RAFFLE_META_FILE):
+        try:
+            with open(RAFFLE_META_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {"round": 1}
+
+
+def save_raffle_meta(data):
+    payload = json.dumps(data, indent=2).encode()
+
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=RAFFLE_META_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 raffle_meta save failed, fallback local:", e)
+
+    # 2️⃣ Local fallback
+    with open(RAFFLE_META_FILE, "w") as f:
+        f.write(payload.decode())
+
+
+def perform_raffle_reset_if_requested():
+    global RAFFLE_ID
+
+    if not RAFFLE_RESET_FLAG:
+        return
+
+    print("🔁 RAFFLE RESET INITIATED")
+
+    # -------------------------
+    # 1️⃣ Delete ticket state
+    # -------------------------
+    if r2_client:
+        try:
+            r2_client.delete_object(Bucket=R2_BUCKET_NAME, Key=STATE_KEY)
+            print("🗑 Deleted R2 ticket_state")
+        except Exception:
+            pass
+
+        try:
+            r2_client.delete_object(Bucket=R2_BUCKET_NAME, Key=SALES_KEY)
+            print("🗑 Deleted R2 ticket_sales")
+        except Exception:
+            pass
+
+    if os.path.exists(STATE_FILE):
+        os.remove(STATE_FILE)
+        print("🗑 Deleted local ticket_state.json")
+
+    if os.path.exists(SALES_FILE):
+        os.remove(SALES_FILE)
+        print("🗑 Deleted local ticket_sales.json")
+
+    # -------------------------
+    # 2️⃣ Increment RAFFLE ROUND
+    # -------------------------
+    meta = load_raffle_meta()
+    current_round = int(meta.get("round", 1))
+    new_round = current_round + 1
+
+    meta["round"] = new_round
+    save_raffle_meta(meta)
+
+    # Update RAFFLE_ID dynamically
+    RAFFLE_ID = f"goodwill-raffle-2026-round{new_round}"
+
+    print("🚀 New RAFFLE_ID:", RAFFLE_ID)
+
+    # IMPORTANT: turn flag off after reset
+    print("⚠️ Remember to set RAFFLE_RESET_FLAG back to False after deployment.")
+
+
 # --------------------------------------------------
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
@@ -304,6 +399,15 @@ INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
 RAFFLE_ID = "goodwill-raffle-2026-round2"
 
+
+# --------------------------------------------------
+# RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
+# --------------------------------------------------
+
+RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
+
+RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
+RAFFLE_META_KEY = "state/raffle_meta.json"
 
 def seeded_random(seed: int) -> float:
     x = math.sin(seed) * 10000
@@ -1575,6 +1679,7 @@ def redownload_ticket():
 # ONE-TIME STARTUP CLEANUP (SAFE)
 # --------------------------------------------------
 try:
+    perform_raffle_reset_if_requested()  # 🔁 campaign reset
     cleanup_old_orders()
     cleanup_old_r2_objects()
 except Exception as e:
