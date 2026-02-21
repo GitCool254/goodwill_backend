@@ -19,6 +19,8 @@ from time import time
 from filelock import FileLock
 import re
 import uuid
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # --------------------------------------------------
 # APP SETUP
@@ -89,6 +91,71 @@ CORS(
         },
     },
 )
+
+# Service account key (already in your Termux setup)
+GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
+GSHEET_ID = os.environ.get("GSHEET_ID")  # set your Google Sheet ID in env
+
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+credentials = service_account.Credentials.from_service_account_file(
+    GSHEET_KEY_FILE, scopes=SCOPES
+)
+sheets_service = build("sheets", "v4", credentials=credentials)
+
+
+def log_to_google_sheet(full_name, email, ticket_numbers, amount, order_id):
+    """
+    Appends a row to the Google Sheet with: date, name, email, ticket numbers, amount, order_id
+    """
+    if not GSHEET_ID:
+        print("⚠️ GSHEET_ID not set. Skipping logging.")
+        return
+
+    try:
+        sheet = sheets_service.spreadsheets()
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        row = [
+            now,
+            full_name,
+            email,
+            ", ".join(ticket_numbers),
+            str(amount),
+            order_id,
+        ]
+        body = {"values": [row]}
+        sheet.values().append(
+            spreadsheetId=GSHEET_ID,
+            range="Sheet1!A:F",
+            valueInputOption="RAW",
+            body=body,
+        ).execute()
+        print(f"✅ Logged order {order_id} to Google Sheet")
+    except Exception as e:
+        print("❌ Failed to log to Google Sheet:", e)
+
+MAX_SHEET_RETRIES = 3
+SHEET_RETRY_DELAY = 1  # seconds
+
+def log_to_google_sheet_with_retry(full_name, email, ticket_numbers, amount, order_id):
+    for attempt in range(1, MAX_SHEET_RETRIES + 1):
+        try:
+            log_to_google_sheet(
+                full_name=full_name,
+                email=email,
+                ticket_numbers=ticket_numbers,
+                amount=amount,
+                order_id=order_id,
+            )
+            return True
+        except Exception as e:
+            print(f"⚠️ Google Sheets logging failed (attempt {attempt}): {e}")
+            if attempt < MAX_SHEET_RETRIES:
+                time.sleep(SHEET_RETRY_DELAY)
+            else:
+                print("❌ Google Sheets logging ultimately failed, skipping...")
+                return False
+
 
 # --------------------------------------------------
 # PATHS
@@ -168,7 +235,9 @@ STATE_FILE = os.path.join(BASE_DIR, "ticket_state.json")
 
 STATE_KEY = "state/ticket_state.json"
 STATE_LOCK_FILE = STATE_FILE + ".lock"
+
 NONCE_LOCK_FILE = os.path.join(BASE_DIR, "nonce.lock")
+NONCE_FILE = os.path.join(BASE_DIR, "used_nonces.json")
 
 def load_ticket_state():
     """Persistent authoritative remaining ticket state.
@@ -700,8 +769,8 @@ USED_ORDERS = load_used_orders()  # R2 primary, memory fallback
 NONCE_INDEX_KEY = "security/used_nonces.json"
 NONCE_EXPIRY_SECONDS = 300  # 5 minutes
 
-
 def load_used_nonces():
+    # 1️⃣ R2 PRIMARY
     if r2_client:
         try:
             obj = r2_client.get_object(
@@ -709,14 +778,23 @@ def load_used_nonces():
                 Key=NONCE_INDEX_KEY,
             )
             return json.loads(obj["Body"].read())
-        except Exception:
-            pass
-    return {}
+        except Exception as e:
+            print("R2 nonce load failed, fallback local:", e)
 
+    # 2️⃣ LOCAL FALLBACK
+    if os.path.exists(NONCE_FILE):
+        try:
+            with open(NONCE_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print("Local nonce load failed:", e)
+
+    return {}
 
 def save_used_nonces(data):
     payload = json.dumps(data, indent=2).encode()
 
+    # 1️⃣ R2 PRIMARY
     if r2_client:
         try:
             r2_client.put_object(
@@ -727,10 +805,16 @@ def save_used_nonces(data):
             )
             return
         except Exception as e:
-            print("Nonce save failed:", e)
+            print("R2 nonce save failed, fallback local:", e)
+
+    # 2️⃣ LOCAL FALLBACK
+    try:
+        with open(NONCE_FILE, "w") as f:
+            f.write(payload.decode())
+    except Exception as e:
+        print("Local nonce save failed:", e)
 
 
-USED_NONCES = load_used_nonces()
 REPLAY_BOUNCE_COUNT = 0
 
 GENERATED_FILES = {}  # order_id -> { filename, mimetype, data }
@@ -1318,12 +1402,16 @@ def generate_ticket():
 
             record_ticket_sale(1)
 
-            # cleanup_old_orders()
-
-            return (
-                jsonify({"status": "tickets_generated", "order_id": order_id}),
-                200,
+            # Log to Google Sheets
+            log_to_google_sheet_with_retry(
+                full_name=full_name,
+                email=email,
+                ticket_numbers=[ticket_no],
+                amount=expected_amount,
+                order_id=order_id,
             )
+
+            return jsonify({"status": "tickets_generated", "order_id": order_id}), 200
 
         ticket_files = []
         ticket_numbers = []
@@ -1377,12 +1465,18 @@ def generate_ticket():
         except ValueError:
             return jsonify({"error": "Tickets sold out"}), 409
 
+        # Log to Google Sheets
+        log_to_google_sheet_with_retry(
+            full_name=full_name,
+            email=email,
+            ticket_numbers=ticket_numbers,
+            amount=expected_amount,
+            order_id=order_id,
+        )
+
         # cleanup_old_orders()
 
-        return (
-            jsonify({"status": "tickets_generated", "order_id": order_id}),
-            200,
-        )
+        return jsonify({"status": "tickets_generated", "order_id": order_id}), 200
 
     except Exception as e:
         print("❌ Ticket generation error: ", e)
