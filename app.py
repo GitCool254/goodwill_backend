@@ -226,7 +226,7 @@ RAFFLE_START_DATE = "2026-02-12"
 SIMULATED_START_DATE = "2026-02-15"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
-RAFFLE_ID = "goodwill-raffle-2026-round1"
+RAFFLE_ID = "goodwill-raffle-2026-round2"
 
 
 def seeded_random(seed: int) -> float:
@@ -819,11 +819,12 @@ def verify_paypal_order(order_id, expected_amount):
             f"Amount mismatch (paid {paid_amount}, expected {expected_amount})",
         )
 
-    if order_id in USED_ORDERS:
+    used_orders = load_used_orders()
+    if order_id in used_orders:
         return False, "Order already used"
 
-    USED_ORDERS.add(order_id)
-    save_used_orders(USED_ORDERS)
+    used_orders.add(order_id)
+    save_used_orders(used_orders)
     return True, None
 
 
