@@ -394,7 +394,7 @@ def perform_raffle_reset_if_requested():
 # --------------------------------------------------
 
 RAFFLE_START_DATE = "2026-02-20"
-SIMULATED_START_DATE = "2026-02-20"
+SIMULATED_START_DATE = "2026-02-21"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 10
 RAFFLE_ID = "goodwill-raffle-2026-round2"
@@ -404,7 +404,7 @@ RAFFLE_ID = "goodwill-raffle-2026-round2"
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
