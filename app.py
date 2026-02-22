@@ -542,6 +542,9 @@ EVENT_TIME = "5PM"
 MAX_NAME_LENGTH = 43
 MAX_PLACE_LENGTH = 45
 
+# 🔒 Security: Maximum tickets per order
+MAX_TICKETS_PER_ORDER = 10
+
 MAX_EXPAND_CHARS = 25
 EXPAND_PADDING = 6
 
@@ -1426,6 +1429,15 @@ def generate_ticket():
         quantity = int(data.get("quantity", 1))
     except BaseException:
         return jsonify({"error": "Invalid quantity"}), 400
+
+    # 🔒 Enforce maximum tickets per order
+    if quantity < 1:
+        return jsonify({"error": "Quantity must be at least 1"}), 400
+
+    if quantity > MAX_TICKETS_PER_ORDER:
+        return jsonify({
+            "error": f"Maximum {MAX_TICKETS_PER_ORDER} tickets allowed per order"
+        }), 400
 
     ticket_price = data.get("ticket_price")
 
