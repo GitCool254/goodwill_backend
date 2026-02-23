@@ -1450,9 +1450,28 @@ def generate_ticket():
 
     # --- SECURITY FIX: Validate product and price against known values ---
     ALLOWED_PRODUCTS = {
-        "Wonderfold wagon": Decimal("6.00"),   # <-- REPLACE with your actual product title and price
-        # add more products if needed, e.g.:
-        # "Another Product": Decimal("15.00"),
+        "Wonderfold wagon": Decimal("6.00"),
+        "Beachcroft Patio set": Decimal("6.00"),
+        "Coolster 125cc": Decimal("8.00"),
+        "Balaclava": Decimal("3.00"),
+        "Western boots": Decimal("4.00"),
+        "2004 Golf cart club car": Decimal("8.00"),
+        "G2 Virtual Reality Headset": Decimal("5.00"),
+        "Yamaha Jetski": Decimal("8.00"),
+        "Surfboard": Decimal("4.00"),
+        "Treadmill Proform Carbon": Decimal("8.00"),
+        "E bike": Decimal("7.00"),
+        "Sightmark wraith night vision scope.": Decimal("5.00"),
+        "Kitchen Island": Decimal("5.00"),
+        "Stunning Brand Broyhill Patio Set - Like New.": Decimal("5.00"),
+        "Light Grey Sectional": Decimal("6.00"),
+        "Power Recliner Set": Decimal("6.00"),
+        "Modern L - Shaped Sofa": Decimal("4.00"),
+        "Washer &Dryer": Decimal("5.00"),
+        "Eco Spa Hot Tub": Decimal("4.00"),
+        "Inflatable Hot Tub": Decimal("4.00"),
+        "Snoo Happiest Baby Bassinet": Decimal("6.00"),
+        "Irest massage chair": Decimal("6.00"),
     }
 
     product_title = data.get("product_title") or data.get("product")
