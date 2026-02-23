@@ -1487,6 +1487,9 @@ def generate_ticket():
 
     email = data.get("email", "").strip().lower()
 
+    if len(email) > 254:
+        return jsonify({"error": "Email too long"}), 400
+
     if not email:
         return jsonify({"error": "Missing email"}), 400
 
