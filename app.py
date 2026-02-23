@@ -1425,12 +1425,21 @@ def generate_ticket():
     if len(event_place) > MAX_PLACE_LENGTH:
         event_place = event_place[:MAX_PLACE_LENGTH] + "…"
 
+    raw_quantity = data.get("quantity")
+    if raw_quantity is None:
+        return jsonify({"error": "Missing quantity"}), 400
+
     try:
-        quantity = int(data.get("quantity", 1))
-    except BaseException:
+        # Convert to Decimal to handle numeric strings precisely
+        qty_dec = Decimal(str(raw_quantity))
+        # Check if it's a whole number (no fractional part)
+        if qty_dec % 1 != 0:
+            return jsonify({"error": "Quantity must be a whole number"}), 400
+        quantity = int(qty_dec)
+    except Exception:
         return jsonify({"error": "Invalid quantity"}), 400
 
-    # 🔒 Enforce maximum tickets per order
+    # 🔒 Enforce minimum and maximum tickets per order
     if quantity < 1:
         return jsonify({"error": "Quantity must be at least 1"}), 400
 
@@ -1480,6 +1489,10 @@ def generate_ticket():
 
     if not email:
         return jsonify({"error": "Missing email"}), 400
+
+    # Validate email format
+    if not re.match(r'^\S+@\S+\.\S+$', email):
+        return jsonify({"error": "Invalid email format"}), 400
 
     order_id = data.get("order_id")
 
