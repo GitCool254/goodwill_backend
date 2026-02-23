@@ -1439,18 +1439,44 @@ def generate_ticket():
             "error": f"Maximum {MAX_TICKETS_PER_ORDER} tickets allowed per order"
         }), 400
 
-    ticket_price = data.get("ticket_price")
+    # --- SECURITY FIX: Validate product and price against known values ---
+    ALLOWED_PRODUCTS = {
+        "Wonderfold wagon": Decimal("6.00"),   # <-- REPLACE with your actual product title and price
+        # add more products if needed, e.g.:
+        # "Another Product": Decimal("15.00"),
+    }
 
+    product_title = data.get("product_title") or data.get("product")
+    if not product_title:
+        return jsonify({"error": "Missing product title"}), 400
+    product_title = product_title.strip()
+    if product_title not in ALLOWED_PRODUCTS:
+        return jsonify({"error": "Invalid product"}), 400
+
+    correct_price = ALLOWED_PRODUCTS[product_title]
+
+    raw_price = data.get("ticket_price")
+    if raw_price is None:
+        return jsonify({"error": "Missing ticket price"}), 400
+
+    # Sanitize price string (remove any non‑numeric characters except dot)
+    price_str = re.sub(r'[^\d.]', '', str(raw_price))
+    # Handle cases with multiple dots – keep only the first dot
+    if price_str.count('.') > 1:
+        parts = price_str.split('.')
+        price_str = parts[0] + '.' + ''.join(parts[1:])
     try:
-        ticket_price = Decimal(str(ticket_price)).quantize(Decimal("0.01"))
-    except BaseException:
+        provided_price = Decimal(price_str).quantize(Decimal("0.01"))
+    except:
         return jsonify({"error": "Invalid ticket price"}), 400
 
-    email = data.get("email", "").strip().lower()
+    if provided_price != correct_price:
+        return jsonify({"error": "Ticket price mismatch"}), 400
 
-    product_title = (
-        data.get("product_title") or data.get("product") or "Raffle Ticket"
-    )
+    ticket_price = provided_price   # use the validated price
+    # --- end of security fix ---
+
+    email = data.get("email", "").strip().lower()
 
     if not email:
         return jsonify({"error": "Missing email"}), 400
