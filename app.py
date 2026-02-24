@@ -847,6 +847,37 @@ def validate_order_id(order_id):
         return False
     return True
 
+# --------------------------------------------------
+# HOLIDAY PROMOTION LOGIC
+# --------------------------------------------------
+def is_holiday_active():
+    """Returns True if today falls within any holiday promotion period."""
+    now = datetime.utcnow()
+    year = now.year
+
+    # Holiday definitions (matching frontend HolidaySystem.jsx)
+    holidays = [
+        # Black Friday: every Friday (weekly)
+        {"type": "weekly", "weekday": 4},  # 4 = Friday (Monday=0)
+        # Christmas: Dec 10 - Dec 31
+        {"type": "range", "start": datetime(year, 2, 18), "end": datetime(year, 2, 19, 23, 59, 59)},
+        # New Year: Jan 1 - Jan 7
+        {"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)},
+        # Valentine: Feb 10 - Feb 14
+        {"type": "range", "start": datetime(year, 2, 10), "end": datetime(year, 2, 14, 23, 59, 59)},
+        # Easter: Apr 1 - Apr 10
+        {"type": "range", "start": datetime(year, 4, 1), "end": datetime(year, 4, 10, 23, 59, 59)},
+    ]
+
+    for h in holidays:
+        if h["type"] == "weekly":
+            if now.weekday() == h["weekday"]:
+                return True
+        else:
+            if h["start"] <= now <= h["end"]:
+                return True
+    return False
+
 
 def cleanup_old_orders(days=CLEANUP_AFTER_DAYS):
     cutoff = datetime.utcnow().timestamp() - (days * 86400)
@@ -1538,6 +1569,12 @@ def generate_ticket():
     if not full_name:
         return jsonify({"error": "Missing required field: name"}), 400
 
+    # Holiday promotion: Buy 5, Get 2 Free
+    effective_quantity = quantity
+    if is_holiday_active() and quantity == 5:
+        effective_quantity = 7
+        print(f"🎁 Holiday promotion applied: {quantity} -> {effective_quantity} tickets")
+
     try:
         if quantity == 1:
             ticket_no = generate_ticket_no()
@@ -1607,7 +1644,7 @@ def generate_ticket():
         with zipfile.ZipFile(
             zip_stream, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
         ) as zf:
-            for _ in range(quantity):
+            for _ in range(effective_quantity):
                 ticket_no = generate_ticket_no()
                 ticket_numbers.append(ticket_no)
                 pdf = generate_ticket_with_placeholders(
@@ -1640,12 +1677,12 @@ def generate_ticket():
             email=email,
             files=[os.path.basename(zip_path)],
             product=product_title,
-            quantity=quantity,
+            quantity=effective_quantity,
             ticket_numbers=ticket_numbers,
         )
 
         try:
-            record_ticket_sale(quantity)
+            record_ticket_sale(effective_quantity)
         except ValueError:
             return jsonify({"error": "Tickets sold out"}), 409
 
