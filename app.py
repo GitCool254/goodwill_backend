@@ -860,7 +860,7 @@ def is_holiday_active():
         # Black Friday: every Friday (weekly)
         {"type": "weekly", "weekday": 4},  # 4 = Friday (Monday=0)
         # Christmas: Dec 10 - Dec 31
-        {"type": "range", "start": datetime(year, 2, 18), "end": datetime(year, 2, 19, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 2, 25), "end": datetime(year, 2, 26, 23, 59, 59)},
         # New Year: Jan 1 - Jan 7
         {"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)},
         # Valentine: Feb 10 - Feb 14
