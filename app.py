@@ -404,7 +404,7 @@ RAFFLE_ID = "goodwill-raffle-2026-round2"
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
