@@ -394,7 +394,7 @@ def perform_raffle_reset_if_requested():
 # --------------------------------------------------
 
 RAFFLE_START_DATE = "2026-03-06"
-SIMULATED_START_DATE = "2026-03-07"
+SIMULATED_START_DATE = "2026-03-09"
 INITIAL_TICKETS = 55
 DEDICATED_DAYS = 12
 RAFFLE_ID = "goodwill-raffle-2026-round2"
