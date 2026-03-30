@@ -1784,6 +1784,82 @@ def redownload_ticket():
 
     return send_ticket_file(order_id, enforce_limit=True)
 
+# --------------------------------------------------
+# RECENT WINNERS (Announcement Feature)
+# --------------------------------------------------
+RECENT_WINNERS_FILE = os.path.join(BASE_DIR, "recent_winners.json")
+SHOW_RECENT_WINNERS = os.environ.get("SHOW_RECENT_WINNERS", "false").lower() == "true"
+
+def load_recent_winners():
+    """Loads recent winners from local JSON file."""
+    if not os.path.exists(RECENT_WINNERS_FILE):
+        # Return a default list (or empty) if file doesn't exist
+        return [
+            {
+                "name": "Jane M.",
+                "state": "Texas",
+                "country": "USA",
+                "flag": "🇺🇸",
+                "prize": "Wonderfold Wagon",
+                "cash_out": False,
+                "ticket_no": "RF-48219"
+            },
+            {
+                "name": "Samuel K.",
+                "state": "New York",
+                "country": "USA",
+                "flag": "🇺🇸",
+                "prize": "Beachcroft Patio Set",
+                "cash_out": False,
+                "ticket_no": "RF-37922"
+            },
+            {
+                "name": "Brian O.",
+                "state": "Ontario",
+                "country": "Canada",
+                "flag": "🇨🇦",
+                "prize": "$800 cash",
+                "cash_out": True,
+                "ticket_no": "RF-29410"
+            },
+            {
+                "name": "Lucy A.",
+                "state": "Missouri",
+                "country": "USA",
+                "flag": "🇺🇸",
+                "prize": "Smart Home Bundle",
+                "cash_out": False,
+                "ticket_no": "RF-18177"
+            }
+        ]
+    try:
+        with open(RECENT_WINNERS_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print("Failed to load recent_winners.json:", e)
+        return []
+
+def save_recent_winners(winners):
+    """Saves recent winners to local JSON file."""
+    try:
+        with open(RECENT_WINNERS_FILE, "w") as f:
+            json.dump(winners, f, indent=2)
+    except Exception as e:
+        print("Failed to save recent_winners.json:", e)
+
+@app.route("/recent_winners", methods=["GET"])
+@limiter.limit("10 per minute")
+def recent_winners():
+    """
+    Returns list of recent winners and a flag indicating whether to show them.
+    """
+    if not SHOW_RECENT_WINNERS:
+        return jsonify({"show": False, "winners": []}), 200
+
+    winners = load_recent_winners()
+    # Optionally filter only winners with a specific date, etc.
+    return jsonify({"show": True, "winners": winners}), 200
+
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
