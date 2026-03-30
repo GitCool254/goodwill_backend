@@ -1822,7 +1822,7 @@ def load_recent_winners():
                 "name": "Brian O.",
                 "state": "Ontario",
                 "country": "Canada",
-                "prize": "$800 cash",
+                "prize": "800",
                 "cash_out": True,
                 "ticket_no": "RF-29410"
             },
