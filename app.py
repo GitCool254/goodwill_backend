@@ -89,6 +89,14 @@ CORS(
                 "https://goodwillrafflestores.vercel.app",
             ]
         },
+        r"/recent_winners": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.co
+m",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
     },
 )
 
