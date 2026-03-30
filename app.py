@@ -1806,7 +1806,6 @@ def load_recent_winners():
                 "name": "Jane M.",
                 "state": "Texas",
                 "country": "USA",
-                "flag": "🇺🇸",
                 "prize": "Wonderfold Wagon",
                 "cash_out": False,
                 "ticket_no": "RF-48219"
@@ -1815,7 +1814,6 @@ def load_recent_winners():
                 "name": "Samuel K.",
                 "state": "New York",
                 "country": "USA",
-                "flag": "🇺🇸",
                 "prize": "Beachcroft Patio Set",
                 "cash_out": False,
                 "ticket_no": "RF-37922"
@@ -1824,7 +1822,6 @@ def load_recent_winners():
                 "name": "Brian O.",
                 "state": "Ontario",
                 "country": "Canada",
-                "flag": "🇨🇦",
                 "prize": "$800 cash",
                 "cash_out": True,
                 "ticket_no": "RF-29410"
@@ -1833,7 +1830,6 @@ def load_recent_winners():
                 "name": "Lucy A.",
                 "state": "Missouri",
                 "country": "USA",
-                "flag": "🇺🇸",
                 "prize": "Smart Home Bundle",
                 "cash_out": False,
                 "ticket_no": "RF-18177"
@@ -1858,7 +1854,7 @@ def save_recent_winners(winners):
 @limiter.limit("10 per minute")
 def recent_winners():
     """
-    Returns list of recent winners and a flag indicating whether to show them.
+    Returns list of recent winners indicating whether to show them.
     """
     if not SHOW_RECENT_WINNERS:
         return jsonify({"show": False, "winners": []}), 200
