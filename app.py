@@ -873,7 +873,7 @@ def is_holiday_active():
         # Valentine: Feb 10 - Feb 14
         {"type": "range", "start": datetime(year, 2, 10), "end": datetime(year, 2, 14, 23, 59, 59)},
         # Easter: Apr 1 - Apr 10
-        {"type": "range", "start": datetime(year, 4, 1), "end": datetime(year, 4, 10, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 3, 1), "end": datetime(year, 3, 10, 23, 59, 59)},
         # General holiday (Ramadan) – adjust dates as needed
         {"type": "range", "start": datetime(year, 3, 1), "end": datetime(year, 4, 30, 23, 59, 59)},
     ]
