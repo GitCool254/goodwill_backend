@@ -1827,6 +1827,14 @@ def load_recent_winners():
                 "prize": "800",
                 "cash_out": True,
                 "ticket_no": "RF-29410"
+            },
+            {
+                "name": "Joshua K.",
+                "state": "Mebourne",
+                "country": "Australia",
+                "prize": "Coolster 125 cc",
+                "cash_out": False,
+                "ticket_no": "RF-37922"
             }
         ]
     try:
