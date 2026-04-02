@@ -1827,14 +1827,6 @@ def load_recent_winners():
                 "prize": "800",
                 "cash_out": True,
                 "ticket_no": "RF-29410"
-            },
-            {
-                "name": "Lucy A.",
-                "state": "Missouri",
-                "country": "USA",
-                "prize": "Smart Home Bundle",
-                "cash_out": False,
-                "ticket_no": "RF-18177"
             }
         ]
     try:
