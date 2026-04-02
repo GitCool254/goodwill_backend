@@ -871,9 +871,9 @@ def is_holiday_active():
         # New Year: Jan 1 - Jan 7
         {"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)},
         # Valentine: Feb 10 - Feb 14
-        {"type": "range", "start": datetime(year, 2, 10), "end": datetime(year, 2, 14, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 4, 3), "end": datetime(year, 4, 4, 23, 59, 59)},
         # Easter: Apr 1 - Apr 10
-        {"type": "range", "start": datetime(year, 4, 3), "end": datetime(year, 4, 10, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 4, 6), "end": datetime(year, 4, 10, 23, 59, 59)},
         # General holiday (Labor's Day) – adjust dates as needed
         {"type": "range", "start": datetime(year, 4, 30), "end": datetime(year, 5, 1, 23, 59, 59)},
     ]
