@@ -1797,7 +1797,7 @@ def redownload_ticket():
 # RECENT WINNERS (Announcement Feature)
 # --------------------------------------------------
 RECENT_WINNERS_FILE = os.path.join(BASE_DIR, "recent_winners.json")
-SHOW_RECENT_WINNERS = os.environ.get("SHOW_RECENT_WINNERS", "false").lower() == "true"
+SHOW_RECENT_WINNERS = os.environ.get("SHOW_RECENT_WINNERS", "false").lower() == "false"
 
 def load_recent_winners():
     """Loads recent winners from local JSON file."""
