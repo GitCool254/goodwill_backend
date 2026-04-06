@@ -907,7 +907,7 @@ def cleanup_old_orders(days=CLEANUP_AFTER_DAYS):
 
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID")
 PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET")
-PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox")
+PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "live")
 PAYPAL_API_BASE = (
     "https://api-m.paypal.com"
     if PAYPAL_MODE == "live"
