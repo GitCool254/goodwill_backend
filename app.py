@@ -857,23 +857,47 @@ def validate_order_id(order_id):
 # --------------------------------------------------
 # HOLIDAY PROMOTION LOGIC
 # --------------------------------------------------
+def get_easter_sunday(year):
+    """Return Easter Sunday date for the given year (Anonymous Gregorian algorithm)."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return datetime(year, month, day)
+
 def is_holiday_active():
     """Returns True if today falls within any holiday promotion period."""
     now = datetime.utcnow()
     year = now.year
 
+    # Compute dynamic Easter range
+    easter_sunday = get_easter_sunday(year)
+    easter_start = easter_sunday
+    easter_end = easter_sunday + timedelta(days=6)   # one week inclusive
+    easter_end = easter_end.replace(hour=23, minute=59, second=59)
+
     # Holiday definitions (matching frontend HolidaySystem.jsx)
     holidays = [
-        # Black Friday: every Friday (weekly)
-        {"type": "weekly", "weekday": 4},  # 4 = Friday (Monday=0)
+        # Black Friday: every Friday (weekday 4 = Friday)
+        {"type": "weekly", "weekday": 4},
         # Christmas: Dec 10 - Dec 31
-        {"type": "range", "start": datetime(year, 12, 10), "end": datetime(year, 12, 31, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 12, 10), "end": datetime(year, 12, 26, 23, 59, 59)},
         # New Year: Jan 1 - Jan 7
         {"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)},
         # Valentine: Feb 10 - Feb 14
-        {"type": "range", "start": datetime(year, 4, 10), "end": datetime(year, 4, 14, 23, 59, 59)},
-        # Easter: Apr 1 - Apr 10
-        {"type": "range", "start": datetime(year, 4, 3), "end": datetime(year, 4, 10, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 2, 10), "end": datetime(year, 2, 14, 23, 59, 59)},
+        # Easter: dynamically computed range
+        {"type": "range", "start": easter_start, "end": easter_end},
         # General holiday (Labor's Day) – adjust dates as needed
         {"type": "range", "start": datetime(year, 4, 30), "end": datetime(year, 5, 1, 23, 59, 59)},
     ]
