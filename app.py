@@ -9,7 +9,7 @@ import os
 import hashlib
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import boto3
 from botocore.client import Config
 import math
@@ -880,24 +880,26 @@ def is_holiday_active():
     now = datetime.utcnow()
     year = now.year
 
-    # Compute dynamic Easter range
+    # Compute dynamic Easter range: Good Friday to Easter Monday (4 days)
     easter_sunday = get_easter_sunday(year)
-    easter_start = easter_sunday
-    easter_end = easter_sunday + timedelta(days=6)   # one week inclusive
-    easter_end = easter_end.replace(hour=23, minute=59, second=59)
+    good_friday = easter_sunday - timedelta(days=2)
+    easter_monday = easter_sunday + timedelta(days=1)
+    # Set times to ensure whole‑day coverage
+    good_friday = good_friday.replace(hour=0, minute=0, second=0)
+    easter_monday = easter_monday.replace(hour=23, minute=59, second=59)
 
     # Holiday definitions (matching frontend HolidaySystem.jsx)
     holidays = [
         # Black Friday: every Friday (weekday 4 = Friday)
         {"type": "weekly", "weekday": 4},
         # Christmas: Dec 10 - Dec 31
-        {"type": "range", "start": datetime(year, 12, 10), "end": datetime(year, 12, 26, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 12, 10), "end": datetime(year, 12, 31, 23, 59, 59)},
         # New Year: Jan 1 - Jan 7
         {"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)},
-        # Valentine: Feb 10 - Feb 14
-        {"type": "range", "start": datetime(year, 2, 10), "end": datetime(year, 2, 14, 23, 59, 59)},
-        # Easter: dynamically computed range
-        {"type": "range", "start": easter_start, "end": easter_end},
+        # Valentine: Feb 10 - Feb 14 (unchanged – note currently set to April in your code)
+        {"type": "range", "start": datetime(year, 4, 10), "end": datetime(year, 4, 14, 23, 59, 59)},
+        # Easter: Good Friday to Easter Monday
+        {"type": "range", "start": good_friday, "end": easter_monday},
         # General holiday (Labor's Day) – adjust dates as needed
         {"type": "range", "start": datetime(year, 4, 30), "end": datetime(year, 5, 1, 23, 59, 59)},
     ]
