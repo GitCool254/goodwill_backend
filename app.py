@@ -122,10 +122,10 @@ credentials = service_account.Credentials.from_service_account_info(
 
 sheets_service = build("sheets", "v4", credentials=credentials)
 
-
-def log_to_google_sheet(full_name, email, ticket_numbers, amount, order_id):
+def log_to_google_sheet(full_name, email, ticket_numbers, amount, order_id, local_time=None):
     """
     Appends a row to the Google Sheet with: date, name, email, ticket numbers, amount, order_id
+    If local_time is provided (datetime object), use it; otherwise use UTC.
     """
     if not GSHEET_ID:
         print("⚠️ GSHEET_ID not set. Skipping logging.")
@@ -133,7 +133,10 @@ def log_to_google_sheet(full_name, email, ticket_numbers, amount, order_id):
 
     try:
         sheet = sheets_service.spreadsheets()
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        if local_time:
+            now = local_time.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         row = [
             now,
             full_name,
@@ -153,11 +156,10 @@ def log_to_google_sheet(full_name, email, ticket_numbers, amount, order_id):
     except Exception as e:
         print("❌ Failed to log to Google Sheet:", e)
 
-
 MAX_SHEET_RETRIES = 3
 SHEET_RETRY_DELAY = 1  # seconds
 
-def log_to_google_sheet_with_retry(full_name, email, ticket_numbers, amount, order_id):
+def log_to_google_sheet_with_retry(full_name, email, ticket_numbers, amount, order_id, local_time=None):
     for attempt in range(1, MAX_SHEET_RETRIES + 1):
         try:
             log_to_google_sheet(
@@ -166,6 +168,7 @@ def log_to_google_sheet_with_retry(full_name, email, ticket_numbers, amount, ord
                 ticket_numbers=ticket_numbers,
                 amount=amount,
                 order_id=order_id,
+                local_time=local_time,
             )
             return True
         except Exception as e:
@@ -175,7 +178,6 @@ def log_to_google_sheet_with_retry(full_name, email, ticket_numbers, amount, ord
             else:
                 print("❌ Google Sheets logging ultimately failed, skipping...")
                 return False
-
 
 # --------------------------------------------------
 # PATHS
@@ -1661,6 +1663,7 @@ def generate_ticket():
                 ticket_numbers=[ticket_no],
                 amount=expected_amount,
                 order_id=order_id,
+                local_time=user_local_now,
             )
 
             return jsonify({"status": "tickets_generated", "order_id": order_id}), 200
@@ -1724,6 +1727,7 @@ def generate_ticket():
             ticket_numbers=ticket_numbers,
             amount=expected_amount,
             order_id=order_id,
+            local_time=user_local_now, 
         )
 
         # cleanup_old_orders()
