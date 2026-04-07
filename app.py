@@ -411,7 +411,7 @@ RAFFLE_ID = "goodwill-raffle-2026-round2"
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
@@ -926,14 +926,26 @@ def cleanup_old_orders(days=CLEANUP_AFTER_DAYS):
             print("Cleanup error:", e)
 
 
-PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID")
-PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET")
 PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "live")
 PAYPAL_API_BASE = (
     "https://api-m.paypal.com"
     if PAYPAL_MODE == "live"
     else "https://api-m.sandbox.paypal.com"
 )
+
+# Mode‑specific credentials
+if PAYPAL_MODE == "live":
+    PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_LIVE_CLIENT_ID")
+    PAYPAL_SECRET = os.environ.get("PAYPAL_LIVE_SECRET")
+else:
+    PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_SANDBOX_CLIENT_ID")
+    PAYPAL_SECRET = os.environ.get("PAYPAL_SANDBOX_SECRET")
+
+# Fallback to old single‑pair variables if new ones are missing (optional)
+if not PAYPAL_CLIENT_ID:
+    PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID")
+if not PAYPAL_SECRET:
+    PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET")
 
 USED_ORDERS = load_used_orders()  # R2 primary, memory fallback
 
@@ -1451,6 +1463,15 @@ def tickets_sold():
     Frontend reads how many tickets are already sold.
     """
     return jsonify({"total_sold": read_sales()}), 200
+
+
+@app.route("/paypal_config", methods=["GET"])
+def paypal_config():
+    return jsonify({
+        "client_id": PAYPAL_CLIENT_ID,
+        "mode": PAYPAL_MODE
+    })
+
 
 @app.route("/", methods=["GET"])
 def health_check():
