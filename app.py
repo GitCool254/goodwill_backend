@@ -400,9 +400,9 @@ def perform_raffle_reset_if_requested():
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
 
-RAFFLE_START_DATE = "2026-03-06"
-SIMULATED_START_DATE = "2026-03-09"
-INITIAL_TICKETS = 55
+RAFFLE_START_DATE = "2026-04-06"
+SIMULATED_START_DATE = "2026-04-04"
+INITIAL_TICKETS = 100
 DEDICATED_DAYS = 12
 RAFFLE_ID = "goodwill-raffle-2026-round2"
 
@@ -875,9 +875,10 @@ def get_easter_sunday(year):
     day = ((h + l - 7 * m + 114) % 31) + 1
     return datetime(year, month, day)
 
-def is_holiday_active():
-    """Returns True if today falls within any holiday promotion period."""
-    now = datetime.utcnow()
+def is_holiday_active(now=None):
+    """Returns True if the given datetime (or current UTC if none) falls within any holiday promotion period."""
+    if now is None:
+        now = datetime.utcnow()
     year = now.year
 
     # Compute dynamic Easter range: Good Friday to Easter Monday (4 days)
@@ -890,18 +891,12 @@ def is_holiday_active():
 
     # Holiday definitions (matching frontend HolidaySystem.jsx)
     holidays = [
-        # Black Friday: every Friday (weekday 4 = Friday)
-        {"type": "weekly", "weekday": 4},
-        # Christmas: Dec 10 - Dec 31
+        {"type": "weekly", "weekday": 4},  # Black Friday: every Friday
         {"type": "range", "start": datetime(year, 12, 10), "end": datetime(year, 12, 31, 23, 59, 59)},
-        # New Year: Jan 1 - Jan 7
         {"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)},
-        # Valentine: Feb 10 - Feb 14 (unchanged – note currently set to April in your code)
-        {"type": "range", "start": datetime(year, 4, 10), "end": datetime(year, 4, 14, 23, 59, 59)},
-        # Easter: Good Friday to Easter Monday
-        {"type": "range", "start": good_friday, "end": easter_monday},
-        # General holiday (Labor's Day) – adjust dates as needed
-        {"type": "range", "start": datetime(year, 4, 30), "end": datetime(year, 5, 1, 23, 59, 59)},
+        {"type": "range", "start": datetime(year, 4, 10), "end": datetime(year, 4, 14, 23, 59, 59)},  # Valentine
+        {"type": "range", "start": good_friday, "end": easter_monday},  # Easter
+        {"type": "range", "start": datetime(year, 4, 30), "end": datetime(year, 5, 1, 23, 59, 59)},  # Labor's Day
     ]
 
     for h in holidays:
@@ -1485,6 +1480,18 @@ def generate_ticket():
         return jsonify({"error": err}), 403
 
     data = request.get_json(force=True)
+
+    # --- NEW: Get user's local datetime from frontend ---
+    user_local_time_str = data.get("user_local_time")
+    if user_local_time_str:
+        try:
+            user_local_now = datetime.fromisoformat(user_local_time_str)
+        except ValueError:
+            user_local_now = None
+    else:
+        user_local_now = None
+
+
     full_name = data.get("name", "").strip()
     event_place = data.get("event_place", EVENT_PLACE).strip()
 
@@ -1606,7 +1613,8 @@ def generate_ticket():
 
     # Holiday promotion: Buy 5, Get 2 Free
     effective_quantity = quantity
-    if is_holiday_active() and quantity == 5:
+    holiday_active = is_holiday_active(now=user_local_now) if user_local_now else is_holiday_active()
+    if holiday_active and quantity == 5:
         effective_quantity = 7
         print(f"🎁 Holiday promotion applied: {quantity} -> {effective_quantity} tickets")
 
