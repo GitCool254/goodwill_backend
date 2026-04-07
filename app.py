@@ -72,9 +72,6 @@ CORS(
                 "https://goodwillrafflestores.vercel.app",
             ]
         },
-        # ----------------------------------
-        # Ticket state & syncing
-        # ----------------------------------
         r"/ticket_state": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
@@ -96,12 +93,18 @@ CORS(
                 "https://goodwillrafflestores.vercel.app",
             ]
         },
+        r"/paypal_config": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
     },
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateNew.pdf")
-
 # Service account key (already in your Termux setup)
 GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
 GSHEET_ID = os.environ.get("GSHEET_ID")  # set your Google Sheet ID in env
@@ -178,14 +181,12 @@ def log_to_google_sheet_with_retry(full_name, email, ticket_numbers, amount, ord
 # PATHS
 # --------------------------------------------------
 
-
 # --------------------------------------------------
 # TICKET SALES LEDGER (ADDITIVE – DO NOT MODIFY)
 # --------------------------------------------------
 
 SALES_FILE = os.path.join(BASE_DIR, "ticket_sales.json")
 SALES_KEY = "state/ticket_sales.json"
-
 
 def read_sales():
     """Returns total tickets sold (persistent).
@@ -212,7 +213,6 @@ def read_sales():
             pass
 
     return 0
-
 
 def write_sales(total_sold):
     payload = json.dumps(
@@ -246,7 +246,6 @@ def write_sales(total_sold):
 # --------------------------------------------------
 STATE_FILE = os.path.join(BASE_DIR, "ticket_state.json")
 
-
 STATE_KEY = "state/ticket_state.json"
 STATE_LOCK_FILE = STATE_FILE + ".lock"
 
@@ -257,7 +256,6 @@ def load_ticket_state():
     """Persistent authoritative remaining ticket state.
     R2 primary, local fallback.
     """
-
     # 1️⃣ R2 primary
     if r2_client:
         try:
@@ -395,7 +393,6 @@ def perform_raffle_reset_if_requested():
     # IMPORTANT: turn flag off after reset
     print("⚠️ Remember to set RAFFLE_RESET_FLAG back to False after deployment.")
 
-
 # --------------------------------------------------
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
@@ -405,7 +402,6 @@ SIMULATED_START_DATE = "2026-04-04"
 INITIAL_TICKETS = 100
 DEDICATED_DAYS = 12
 RAFFLE_ID = "goodwill-raffle-2026-round2"
-
 
 # --------------------------------------------------
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
@@ -444,7 +440,6 @@ def compute_daily_decay(days_passed: int) -> int:
     rng = random.Random(seed_int)
     return rng.randint(min_daily, max_daily)
 
-
 def compute_total_decay(days_passed: int) -> int:
     """
     Returns cumulative decay from day 1 up to days_passed.
@@ -453,7 +448,6 @@ def compute_total_decay(days_passed: int) -> int:
     for d in range(1, days_passed + 1):
         total += compute_daily_decay(d)
     return total
-
 
 def apply_daily_decay_if_needed():
     """
@@ -519,9 +513,7 @@ def apply_daily_decay_if_needed():
         save_ticket_state(state)
         return state
 
-
-# --------------------------------------------------
-# PERSISTENT TICKET STORAGE                                            # -
+# PERSISTENT TICKET STORAGE
 
 TICKET_STORAGE_DIR = os.environ.get(
     "TICKET_STORAGE_DIR", os.path.join(BASE_DIR, "storage", "tickets")
@@ -666,7 +658,6 @@ def fetch_zip_from_r2(order_id):
         print("R2 fetch failed:", e)
         return None
 
-
 def fetch_pdf_from_r2(order_id: str, filename: str):
     if not r2_client:
         return None
@@ -680,7 +671,6 @@ def fetch_pdf_from_r2(order_id: str, filename: str):
     except Exception as e:
         print("R2 PDF fetch failed:", e)
         return None
-
 
 def cleanup_old_r2_objects(days=CLEANUP_AFTER_DAYS):
     """
@@ -711,7 +701,6 @@ def cleanup_old_r2_objects(days=CLEANUP_AFTER_DAYS):
     except Exception as e:
         print("R2 cleanup error:", e)
 
-
 def load_orders_index():
     # 1️⃣ PRIMARY: R2
     if r2_client:
@@ -734,7 +723,6 @@ def load_orders_index():
 
     return {"orders": {}}
 
-
 def save_orders_index(data):
     payload = json.dumps(data, indent=2).encode()
 
@@ -756,7 +744,6 @@ def save_orders_index(data):
     with open(ORDERS_INDEX_FILE, "w") as f:
         f.write(payload.decode())
 
-
 def load_email_index():
     if r2_client:
         try:
@@ -769,7 +756,6 @@ def load_email_index():
             pass
 
     return {}
-
 
 def save_email_index(data):
     payload = json.dumps(data, indent=2).encode()
@@ -786,7 +772,6 @@ def save_email_index(data):
         except Exception as e:
             print("R2 email index save failed:", e)
 
-
 def load_used_orders():
     # 1️⃣ R2 PRIMARY
     if r2_client:
@@ -801,7 +786,6 @@ def load_used_orders():
 
     # 2️⃣ Fallback memory
     return set()
-
 
 def save_used_orders(order_set):
     payload = json.dumps(list(order_set), indent=2).encode()
@@ -820,7 +804,6 @@ def save_used_orders(order_set):
             print("R2 used_orders save failed:", e)
 
     # 2️⃣ If R2 fails → memory only (do nothing)
-
 
 def register_order(order_id, email, files, product, quantity, ticket_numbers):
     index = load_orders_index()
@@ -907,7 +890,6 @@ def is_holiday_active(now=None):
             if h["start"] <= now <= h["end"]:
                 return True
     return False
-
 
 def cleanup_old_orders(days=CLEANUP_AFTER_DAYS):
     cutoff = datetime.utcnow().timestamp() - (days * 86400)
@@ -1007,7 +989,6 @@ REPLAY_BOUNCE_COUNT = 0
 GENERATED_FILES = {}  # order_id -> { filename, mimetype, data }
 MAX_CACHE_ITEMS = 100
 
-
 def verify_paypal_order(order_id, expected_amount):
     auth = (PAYPAL_CLIENT_ID, PAYPAL_SECRET)
 
@@ -1098,10 +1079,8 @@ def verify_paypal_order(order_id, expected_amount):
     save_used_orders(used_orders)
     return True, None
 
-
 def generate_ticket_no():
     return f"GWS-{uuid.uuid4().hex[:8].upper()}"
-
 
 def generate_ticket_with_placeholders(
     full_name, ticket_no, event_date, ticket_price, event_place, event_time
@@ -1196,7 +1175,6 @@ def generate_ticket_with_placeholders(
     output.seek(0)
     return output
 
-
 def stream_file(path, chunk_size=8192):
     with open(path, "rb") as f:
         while True:
@@ -1204,7 +1182,6 @@ def stream_file(path, chunk_size=8192):
             if not chunk:
                 break
             yield chunk
-
 
 def send_ticket_file(order_id, enforce_limit=False):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
@@ -1348,7 +1325,6 @@ def send_ticket_file(order_id, enforce_limit=False):
         },
     )
 
-
 @app.before_request
 def enforce_https():
     # Allow health checks internally
@@ -1358,7 +1334,6 @@ def enforce_https():
     # Render sets X-Forwarded-Proto
     if request.headers.get("X-Forwarded-Proto", "http") != "https":
         return jsonify({"error": "HTTPS required"}), 403
-
 
 def verify_request_nonce(req):
     timestamp = req.headers.get("X-Timestamp")
@@ -1400,10 +1375,7 @@ def verify_request_nonce(req):
 # ROUTES
 # --------------------------------------------------
 
-# -------------------------
 # Simple in-memory caching
-# -------------------------
-
 
 CACHE_EXPIRY = 10  # seconds
 
@@ -1455,7 +1427,6 @@ def ticket_state():
 
     return response
 
-
 @app.route("/tickets_sold", methods=["GET"])
 @limiter.limit("5 per 10 seconds")
 def tickets_sold():
@@ -1464,14 +1435,12 @@ def tickets_sold():
     """
     return jsonify({"total_sold": read_sales()}), 200
 
-
 @app.route("/paypal_config", methods=["GET"])
 def paypal_config():
     return jsonify({
         "client_id": PAYPAL_CLIENT_ID,
         "mode": PAYPAL_MODE
     })
-
 
 @app.route("/", methods=["GET"])
 def health_check():
@@ -1487,11 +1456,9 @@ def health_check():
         200,
     )
 
-
 def order_already_generated(order_id):
     order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
     return os.path.exists(order_dir) and os.listdir(order_dir)
-
 
 @app.route("/generate_ticket", methods=["POST"])
 @limiter.limit("5 per minute")
@@ -1772,7 +1739,6 @@ def generate_ticket():
 # MAIN
 # --------------------------------------------------
 
-
 @app.route("/download_ticket", methods=["POST"])
 @limiter.limit("10 per minute")
 def download_ticket():
@@ -1790,7 +1756,6 @@ def download_ticket():
         return jsonify({"error": "Missing order_id"}), 400
 
     return send_ticket_file(order_id, enforce_limit=False)
-
 
 @app.route("/my_tickets", methods=["POST"])
 @limiter.limit("10 per minute")
@@ -1828,7 +1793,6 @@ def my_tickets():
         )
 
     return jsonify({"orders": orders}), 200
-
 
 @app.route("/redownload_ticket", methods=["POST"])
 @limiter.limit("10 per minute")
