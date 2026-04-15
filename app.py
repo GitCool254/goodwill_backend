@@ -1692,7 +1692,7 @@ def generate_ticket():
                     print(f"🎁 Referral applied: {referral_code} earned a credit")
 
     try:
-        if quantity == 1:
+        if effective_quantity == 1:
             ticket_no = generate_ticket_no()
 
             pdf = generate_ticket_with_placeholders(
