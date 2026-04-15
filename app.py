@@ -22,10 +22,7 @@ import uuid
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# --------------------------------------------------
 # APP SETUP
-# --------------------------------------------------
-
 app = Flask(__name__)
 
 # Rate limiter (per-IP)
@@ -39,9 +36,7 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 CORS(
     app,
     resources={
-        # ----------------------------------
-        # Ticket generation & downloads
-        # ----------------------------------
+
         r"/generate_ticket": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
@@ -128,7 +123,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateNew.pdf")
 # Service account key (already in your Termux setup)
 GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
-GSHEET_ID = os.environ.get("GSHEET_ID")  # set your Google Sheet ID in env
+GSHEET_ID = os.environ.get("GSHEET_ID")
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -215,7 +210,6 @@ def read_sales():
     """Returns total tickets sold (persistent).
     R2 authoritative, local fallback.
     """
-
     # 1️⃣ R2 primary
     # if r2_client:
     try:
@@ -420,17 +414,17 @@ def perform_raffle_reset_if_requested():
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
 
-RAFFLE_START_DATE = "2026-04-06"
-SIMULATED_START_DATE = "2026-04-04"
+RAFFLE_START_DATE = "2026-04-12"
+SIMULATED_START_DATE = "2026-04-14"
 INITIAL_TICKETS = 100
 DEDICATED_DAYS = 12
-RAFFLE_ID = "goodwill-raffle-2026-round2"
+RAFFLE_ID = "goodwill-raffle-2026-round3"
 
 # --------------------------------------------------
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
@@ -1655,10 +1649,16 @@ def generate_ticket():
     if not full_name:
         return jsonify({"error": "Missing required field: name"}), 400
 
-    # Holiday promotion: Buy 5, Get 2 Free
+    # Start with the original quantity
     effective_quantity = quantity
 
-    # --- Free ticket credit (use if available) ---
+    # 1️⃣ Apply holiday promotion first (Buy 5, Get 2 Free)
+    holiday_active = is_holiday_active(now=user_local_now) if user_local_now else is_holiday_active()
+    if holiday_active and quantity == 5:
+        effective_quantity = 7
+        print(f"🎁 Holiday promotion applied: {quantity} -> {effective_quantity} tickets")
+
+    # 2️⃣ Then apply free ticket credit (if user has any)
     if use_free_ticket:
         referrals = load_referrals()
         user_credits = 0
@@ -1667,7 +1667,7 @@ def generate_ticket():
                 user_credits = info.get("credits", 0)
                 break
         if user_credits > 0:
-            effective_quantity = quantity + 1
+            effective_quantity = effective_quantity + 1
             # Decrement the credit
             for code, info in referrals.items():
                 if info.get("referrer_email") == email:
@@ -1676,14 +1676,7 @@ def generate_ticket():
             save_referrals(referrals)
             print(f"🎟️ Used 1 free ticket credit, new effective quantity: {effective_quantity}")
         else:
-            effective_quantity = quantity
-    else:
-        effective_quantity = quantity
-
-    holiday_active = is_holiday_active(now=user_local_now) if user_local_now else is_holiday_active()
-    if holiday_active and quantity == 5:
-        effective_quantity = 7
-        print(f"🎁 Holiday promotion applied: {quantity} -> {effective_quantity} tickets")
+            print(f"⚠️ Free ticket requested but no credits available for {email}")
 
     # Referral:apply reward if referral code provided and quantity >= 3
     if referral_code and quantity >= 3:
