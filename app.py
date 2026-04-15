@@ -100,6 +100,27 @@ CORS(
                 "https://goodwillrafflestores.vercel.app",
             ]
         },
+        r"/referral/generate": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
+        r"/referral/apply": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
+        r"/referral/rewards": {
+            "origins": [
+                "https://goodwill-raffle-store-raffle-store.onrender.com",
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+            ]
+        },
     },
 )
 
@@ -556,6 +577,8 @@ ORDERS_INDEX_FILE = os.path.join(TICKET_STORAGE_DIR, "orders.json")
 ORDERS_INDEX_KEY = "indexes/orders.json"
 EMAIL_INDEX_KEY = "indexes/email_orders.json"
 USED_ORDERS_KEY = "indexes/used_orders.json"
+REFERRALS_FILE = os.path.join(BASE_DIR, "referrals.json")
+REFERRALS_KEY = "state/referrals.json"
 
 # ===============================
 # Cloudflare R2 (Storage Only) Step 1R
@@ -807,6 +830,34 @@ def save_used_orders(order_set):
 
     # 2️⃣ If R2 fails → memory only (do nothing)
 
+def load_referrals():
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            obj = r2_client.get_object(Bucket=R2_BUCKET_NAME, Key=REFERRALS_KEY)
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+    # 2️⃣ Local fallback
+    if os.path.exists(REFERRALS_FILE):
+        try:
+            with open(REFERRALS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_referrals(data):
+    payload = json.dumps(data, indent=2).encode()
+    if r2_client:
+        try:
+            r2_client.put_object(Bucket=R2_BUCKET_NAME, Key=REFERRALS_KEY, Body=payload, ContentType="application/json")
+            return
+        except Exception:
+            pass
+    with open(REFERRALS_FILE, "w") as f:
+        f.write(payload.decode())
+
 def register_order(order_id, email, files, product, quantity, ticket_numbers):
     index = load_orders_index()
 
@@ -838,6 +889,7 @@ def validate_order_id(order_id):
     if not re.fullmatch(r"[A-Za-z0-9\-]{10,50}", order_id):
         return False
     return True
+
 
 # --------------------------------------------------
 # HOLIDAY PROMOTION LOGIC
@@ -1481,6 +1533,8 @@ def generate_ticket():
     else:
         user_local_now = None
 
+    referral_code = data.get("referral_code", "").strip()
+    use_free_ticket = data.get("use_free_ticket", False)
 
     full_name = data.get("name", "").strip()
     event_place = data.get("event_place", EVENT_PLACE).strip()
@@ -1603,10 +1657,46 @@ def generate_ticket():
 
     # Holiday promotion: Buy 5, Get 2 Free
     effective_quantity = quantity
+
+    # --- Free ticket credit (use if available) ---
+    if use_free_ticket:
+        referrals = load_referrals()
+        user_credits = 0
+        for info in referrals.values():
+            if info.get("referrer_email") == email:
+                user_credits = info.get("credits", 0)
+                break
+        if user_credits > 0:
+            effective_quantity = quantity + 1
+            # Decrement the credit
+            for code, info in referrals.items():
+                if info.get("referrer_email") == email:
+                    info["credits"] = user_credits - 1
+                    break
+            save_referrals(referrals)
+            print(f"🎟️ Used 1 free ticket credit, new effective quantity: {effective_quantity}")
+        else:
+            effective_quantity = quantity
+    else:
+        effective_quantity = quantity
+
     holiday_active = is_holiday_active(now=user_local_now) if user_local_now else is_holiday_active()
     if holiday_active and quantity == 5:
         effective_quantity = 7
         print(f"🎁 Holiday promotion applied: {quantity} -> {effective_quantity} tickets")
+
+    # Referral:apply reward if referral code provided and quantity >= 3
+    if referral_code and quantity >= 3:
+        referrals = load_referrals()
+        if referral_code in referrals:
+            referrer_info = referrals[referral_code]
+            # Avoid self referral
+            if referrer_info["referrer_email"] != email:
+                if email not in referrer_info.get("referred_emails", []):
+                    referrer_info["credits"] = referrer_info.get("credits", 0) + 1
+                    referrer_info.setdefault("referred_emails", []).append(email)
+                    save_referrals(referrals)
+                    print(f"🎁 Referral applied: {referral_code} earned a credit")
 
     try:
         if quantity == 1:
@@ -1888,6 +1978,75 @@ def recent_winners():
     # Optionally filter only winners with a specific date, etc.
     return jsonify({"show": True, "winners": winners}), 200
 
+@app.route("/referral/generate", methods=["POST"])
+@limiter.limit("10 per minute")
+def generate_referral_code():
+    data = request.get_json(force=True)
+    email = data.get("email", "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email required"}), 400
+
+    referrals = load_referrals()
+    # Check if email already has a code
+    for code, info in referrals.items():
+        if info.get("referrer_email") == email:
+            return jsonify({"code": code, "credits": info.get("credits", 0)}), 200
+
+    # Generate new code (first 8 chars of email hash)
+    code = hashlib.md5(email.encode()).hexdigest()[:8].upper()
+    referrals[code] = {
+        "referrer_email": email,
+        "credits": 0,
+        "referred_emails": []
+    }
+    save_referrals(referrals)
+    return jsonify({"code": code, "credits": 0}), 200
+
+@app.route("/referral/apply", methods=["POST"])
+@limiter.limit("10 per minute")
+def apply_referral():
+    data = request.get_json(force=True)
+    code = data.get("code", "").strip()
+    referred_email = data.get("email", "").strip().lower()
+    quantity = data.get("quantity", 0)
+
+    if not code or not referred_email or quantity < 3:
+        return jsonify({"error": "Invalid request"}), 400
+
+    referrals = load_referrals()
+    if code not in referrals:
+        return jsonify({"error": "Invalid referral code"}), 404
+
+    # Avoid self‑referral
+    if referrals[code]["referrer_email"] == referred_email:
+        return jsonify({"error": "Cannot refer yourself"}), 400
+
+    # Check if this referred email already used this code
+    if referred_email in referrals[code].get("referred_emails", []):
+        return jsonify({"message": "Already counted"}), 200
+
+    # Award 1 credit for every 3 tickets purchased (once per referred email)
+    referrals[code]["credits"] = referrals[code].get("credits", 0) + 1
+    referrals[code].setdefault("referred_emails", []).append(referred_email)
+    save_referrals(referrals)
+
+    return jsonify({"message": "Referral applied, referrer earned 1 credit"}), 200
+
+@app.route("/referral/rewards", methods=["POST"])
+@limiter.limit("10 per minute")
+def get_referral_rewards():
+    data = request.get_json(force=True)
+    email = data.get("email", "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email required"}), 400
+
+    referrals = load_referrals()
+    credits = 0
+    for info in referrals.values():
+        if info.get("referrer_email") == email:
+            credits = info.get("credits", 0)
+            break
+    return jsonify({"credits": credits}), 200
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
