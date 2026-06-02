@@ -845,7 +845,7 @@ def save_referrals(data):
     with open(REFERRALS_FILE, "w") as f:
         f.write(payload.decode())
 
-def register_order(order_id, email, files, product, quantity, ticket_numbers):
+def register_order(order_id, email, files, product, quantity, ticket_numbers, user_local_time=None):
     index = load_orders_index()
 
     index["orders"][order_id] = {
@@ -855,6 +855,7 @@ def register_order(order_id, email, files, product, quantity, ticket_numbers):
         "quantity": quantity,
         "tickets": ticket_numbers,  # list of ticket numbers
         "created_at": datetime.utcnow().isoformat() + "Z",
+        "user_local_time": user_local_time.isoformat() if user_local_time else None,
     }
 
     save_orders_index(index)
@@ -1510,15 +1511,17 @@ def generate_ticket():
 
     data = request.get_json(force=True)
 
-    # --- NEW: Get user's local datetime from frontend ---
-    user_local_time_str = data.get("user_local_time")
-    if user_local_time_str:
+    # --- Get user's local time from timezone offset header (client provides timezone offset in minutes) ---
+    # Client should send: "X-Timezone-Offset": "-300" (for EST) or "+600" (for AEST)
+    user_tz_offset_str = request.headers.get("X-Timezone-Offset")
+    user_local_now = None
+    if user_tz_offset_str:
         try:
-            user_local_now = datetime.fromisoformat(user_local_time_str)
+            offset_minutes = int(user_tz_offset_str)
+            # Apply offset to server UTC time to get user's local time
+            user_local_now = datetime.utcnow() + timedelta(minutes=offset_minutes)
         except ValueError:
             user_local_now = None
-    else:
-        user_local_now = None
 
     referral_code = data.get("referral_code", "").strip()
     use_free_ticket = data.get("use_free_ticket", False)
@@ -1645,8 +1648,10 @@ def generate_ticket():
     # Start with the original quantity
     effective_quantity = quantity
 
-    # 1️⃣ Apply holiday promotion first (Buy 5, Get 2 Free)
-    holiday_active = is_holiday_active(now=user_local_now) if user_local_now else is_holiday_active()
+    # 1️⃣ Apply holiday promotion first (BBuy 5, Get 2 Free)
+    # always uses server UTC time
+    holiday_active = is_holiday_active()
+
     if holiday_active and quantity == 5:
         effective_quantity = 7
         print(f"🎁 Holiday promotion applied: {quantity} -> {effective_quantity} tickets")
@@ -1728,6 +1733,7 @@ def generate_ticket():
                 product=product_title,
                 quantity=1,
                 ticket_numbers=[ticket_no],
+                user_local_time=user_local_now,
             )
 
             record_ticket_sale(1)
@@ -1789,6 +1795,7 @@ def generate_ticket():
             product=product_title,
             quantity=effective_quantity,
             ticket_numbers=ticket_numbers,
+            user_local_time=user_local_now,
         )
 
         try:
@@ -1869,6 +1876,7 @@ def my_tickets():
                 "quantity": meta.get("quantity"),
                 "tickets": meta.get("tickets", []),
                 "date": meta.get("created_at"),
+                "user_local_time": meta.get("user_local_time"),
             }
         )
 
