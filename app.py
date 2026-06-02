@@ -102,13 +102,6 @@ CORS(
                 "https://goodwillrafflestores.vercel.app",
             ]
         },
-        r"/referral/apply": {
-            "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
-                "https://goodwillrafflestore.onrender.com",
-                "https://goodwillrafflestores.vercel.app",
-            ]
-        },
         r"/referral/rewards": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
@@ -424,7 +417,7 @@ RAFFLE_ID = "goodwill-raffle-2026-round3"
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
@@ -1994,36 +1987,6 @@ def generate_referral_code():
     }
     save_referrals(referrals)
     return jsonify({"code": code, "credits": 0}), 200
-
-@app.route("/referral/apply", methods=["POST"])
-@limiter.limit("10 per minute")
-def apply_referral():
-    data = request.get_json(force=True)
-    code = data.get("code", "").strip()
-    referred_email = data.get("email", "").strip().lower()
-    quantity = data.get("quantity", 0)
-
-    if not code or not referred_email or quantity < 3:
-        return jsonify({"error": "Invalid request"}), 400
-
-    referrals = load_referrals()
-    if code not in referrals:
-        return jsonify({"error": "Invalid referral code"}), 404
-
-    # Avoid self‑referral
-    if referrals[code]["referrer_email"] == referred_email:
-        return jsonify({"error": "Cannot refer yourself"}), 400
-
-    # Check if this referred email already used this code
-    if referred_email in referrals[code].get("referred_emails", []):
-        return jsonify({"message": "Already counted"}), 200
-
-    # Award 1 credit for every 3 tickets purchased (once per referred email)
-    referrals[code]["credits"] = referrals[code].get("credits", 0) + 1
-    referrals[code].setdefault("referred_emails", []).append(referred_email)
-    save_referrals(referrals)
-
-    return jsonify({"message": "Referral applied, referrer earned 1 credit"}), 200
 
 @app.route("/referral/rewards", methods=["POST"])
 @limiter.limit("10 per minute")
