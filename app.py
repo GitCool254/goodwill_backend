@@ -1623,7 +1623,8 @@ def generate_ticket():
         return jsonify({"error": "Missing email"}), 400
 
     # Validate email format
-    if not re.match(r'^\S+@\S+\.\S+$', email):
+    email_regex = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    if not email_regex.match(email):
         return jsonify({"error": "Invalid email format"}), 400
 
     order_id = data.get("order_id")
