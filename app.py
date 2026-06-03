@@ -262,6 +262,9 @@ STATE_LOCK_FILE = STATE_FILE + ".lock"
 NONCE_LOCK_FILE = os.path.join(BASE_DIR, "nonce.lock")
 NONCE_FILE = os.path.join(BASE_DIR, "used_nonces.json")
 
+REFERRALS_LOCK_FILE = os.path.join(BASE_DIR, "referrals.lock")
+referrals_lock = FileLock(REFERRALS_LOCK_FILE)
+
 def load_ticket_state():
     """Persistent authoritative remaining ticket state.
     R2 primary, local fallback.
@@ -1658,36 +1661,38 @@ def generate_ticket():
 
     # 2️⃣ Then apply free ticket credit (if user has any)
     if use_free_ticket:
-        referrals = load_referrals()
-        user_credits = 0
-        for info in referrals.values():
-            if info.get("referrer_email") == email:
-                user_credits = info.get("credits", 0)
-                break
-        if user_credits > 0:
-            effective_quantity = effective_quantity + 1
-            # Decrement the credit
-            for code, info in referrals.items():
+        with referrals_lock:
+            referrals = load_referrals()
+            user_credits = 0
+            for info in referrals.values():
                 if info.get("referrer_email") == email:
-                    info["credits"] = user_credits - 1
+                    user_credits = info.get("credits", 0)
                     break
-            save_referrals(referrals)
-            print(f"🎟️ Used 1 free ticket credit, new effective quantity: {effective_quantity}")
-        else:
-            print(f"⚠️ Free ticket requested but no credits available for {email}")
+            if user_credits > 0:
+                effective_quantity = effective_quantity + 1
+                # Decrement the credit
+                for code, info in referrals.items():
+                    if info.get("referrer_email") == email:
+                        info["credits"] = user_credits - 1
+                        break
+                save_referrals(referrals)
+                print(f"🎟️ Used 1 free ticket credit, new effective quantity: {effective_quantity}")
+            else:
+                print(f"⚠️ Free ticket requested but no credits available for {email}")
 
-    # Referral:apply reward if referral code provided and quantity >= 3
+    # Referral:apply reward if referral code provided and quantity >= 
     if referral_code and quantity >= 3:
-        referrals = load_referrals()
-        if referral_code in referrals:
-            referrer_info = referrals[referral_code]
-            # Avoid self referral
-            if referrer_info["referrer_email"] != email:
-                if email not in referrer_info.get("referred_emails", []):
-                    referrer_info["credits"] = referrer_info.get("credits", 0) + 1
-                    referrer_info.setdefault("referred_emails", []).append(email)
-                    save_referrals(referrals)
-                    print(f"🎁 Referral applied: {referral_code} earned a credit")
+        with referrals_lock:
+            referrals = load_referrals()
+            if referral_code in referrals:
+                referrer_info = referrals[referral_code]
+                # Avoid self referral
+                if referrer_info["referrer_email"] != email:
+                    if email not in referrer_info.get("referred_emails", []):
+                        referrer_info["credits"] = referrer_info.get("credits", 0) + 1
+                        referrer_info.setdefault("referred_emails", []).append(email)
+                        save_referrals(referrals)
+                        print(f"🎁 Referral applied: {referral_code} earned a credit")
 
     try:
         if effective_quantity == 1:
@@ -1980,21 +1985,22 @@ def generate_referral_code():
     if not email:
         return jsonify({"error": "Email required"}), 400
 
-    referrals = load_referrals()
-    # Check if email already has a code
-    for code, info in referrals.items():
-        if info.get("referrer_email") == email:
-            return jsonify({"code": code, "credits": info.get("credits", 0)}), 200
+    with referrals_lock:
+        referrals = load_referrals()
+        # Check if email already has a code
+        for code, info in referrals.items():
+            if info.get("referrer_email") == email:
+                return jsonify({"code": code, "credits": info.get("credits", 0)}), 200
 
-    # Generate new code (first 8 chars of email hash)
-    code = hashlib.md5(email.encode()).hexdigest()[:8].upper()
-    referrals[code] = {
-        "referrer_email": email,
-        "credits": 0,
-        "referred_emails": []
-    }
-    save_referrals(referrals)
-    return jsonify({"code": code, "credits": 0}), 200
+        # Generate new code (first 8 chars of email hash)
+        code = hashlib.md5(email.encode()).hexdigest()[:8].upper()
+        referrals[code] = {
+            "referrer_email": email,
+            "credits": 0,
+            "referred_emails": []
+        }
+        save_referrals(referrals)
+        return jsonify({"code": code, "credits": 0}), 200
 
 @app.route("/referral/rewards", methods=["POST"])
 @limiter.limit("10 per minute")
@@ -2004,13 +2010,14 @@ def get_referral_rewards():
     if not email:
         return jsonify({"error": "Email required"}), 400
 
-    referrals = load_referrals()
-    credits = 0
-    for info in referrals.values():
-        if info.get("referrer_email") == email:
-            credits = info.get("credits", 0)
-            break
-    return jsonify({"credits": credits}), 200
+    with referrals_lock:
+        referrals = load_referrals()
+        credits = 0
+        for info in referrals.values():
+            if info.get("referrer_email") == email:
+                credits = info.get("credits", 0)
+                break
+        return jsonify({"credits": credits}), 200
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
