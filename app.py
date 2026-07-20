@@ -41,14 +41,18 @@ CORS(
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
         r"/download_ticket": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ],
             "expose_headers": ["Content-Disposition"],
         },
@@ -56,7 +60,9 @@ CORS(
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ],
             "expose_headers": ["Content-Disposition"],
         },
@@ -64,49 +70,63 @@ CORS(
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
         r"/ticket_state": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
         r"/tickets_sold": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
         r"/recent_winners": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
         r"/paypal_config": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
         r"/referral/generate": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
         r"/referral/rewards": {
             "origins": [
                 "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
             ]
         },
     },
