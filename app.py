@@ -39,7 +39,6 @@ CORS(
 
         r"/generate_ticket": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -48,7 +47,6 @@ CORS(
         },
         r"/download_ticket": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -58,7 +56,6 @@ CORS(
         },
         r"/redownload_ticket": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -68,7 +65,6 @@ CORS(
         },
         r"/my_tickets": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -77,7 +73,6 @@ CORS(
         },
         r"/ticket_state": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -86,7 +81,6 @@ CORS(
         },
         r"/tickets_sold": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -95,7 +89,6 @@ CORS(
         },
         r"/recent_winners": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -104,7 +97,6 @@ CORS(
         },
         r"/paypal_config": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -113,7 +105,6 @@ CORS(
         },
         r"/referral/generate": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -122,7 +113,6 @@ CORS(
         },
         r"/referral/rewards": {
             "origins": [
-                "https://goodwill-raffle-store-raffle-store.onrender.com",
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
@@ -1580,17 +1570,18 @@ def generate_ticket():
 
     # --- SECURITY FIX: Validate product and price against known values ---
     ALLOWED_PRODUCTS = {
-        "Wonderfold wagon": Decimal("6.00"),
+        "DJI Mini 2 drone": Decimal("6.00"),
         "Beachcroft Patio set": Decimal("6.00"),
         "Coolster 125cc": Decimal("8.00"),
         "Balaclava": Decimal("3.00"),
-        "Western boots": Decimal("4.00"),
-        "2004 Golf cart club car": Decimal("8.00"),
-        "G2 Virtual Reality Headset": Decimal("5.00"),
+        "Western boots": Decimal("3.00"),
+        "Club Car DS": Decimal("10.00"),
+        "G1 Virtual Reality Headset": Decimal("5.00"),
         "Yamaha Jetski": Decimal("8.00"),
+        "4D-V15 Drone Zeros Mini Quadcopter": Decimal("5.00"),
         "Surfboard": Decimal("4.00"),
         "Treadmill Proform Carbon": Decimal("8.00"),
-        "E bike": Decimal("7.00"),
+        "Mokwheel Mesa Lite e-bikes": Decimal("7.00"),
         "Sightmark wraith night vision scope.": Decimal("5.00"),
         "Kitchen Island": Decimal("5.00"),
         "Stunning Brand Broyhill Patio Set - Like New.": Decimal("5.00"),
@@ -1598,7 +1589,7 @@ def generate_ticket():
         "Power Recliner Set": Decimal("6.00"),
         "Modern L - Shaped Sofa": Decimal("4.00"),
         "Washer &Dryer": Decimal("5.00"),
-        "Eco Spa Hot Tub": Decimal("4.00"),
+        "Tuff Spas TT650": Decimal("5.00"),
         "Inflatable Hot Tub": Decimal("4.00"),
         "Snoo Happiest Baby Bassinet": Decimal("6.00"),
         "Irest massage chair": Decimal("6.00"),
