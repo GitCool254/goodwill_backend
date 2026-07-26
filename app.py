@@ -430,7 +430,7 @@ RAFFLE_ID = "goodwill-raffle-2026-round4"
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
@@ -1572,9 +1572,9 @@ def generate_ticket():
     ALLOWED_PRODUCTS = {
         "DJI Mini 2 drone": Decimal("6.00"),
         "Beachcroft Patio set": Decimal("6.00"),
-        "Coolster 125cc": Decimal("8.00"),
+        "Coolster 3125CX-2 125cc": Decimal("10.00"),
         "Balaclava": Decimal("3.00"),
-        "Western boots": Decimal("3.00"),
+        "Western boots": Decimal("4.00"),
         "Club Car DS": Decimal("10.00"),
         "G1 Virtual Reality Headset": Decimal("5.00"),
         "Yamaha Jetski": Decimal("8.00"),
