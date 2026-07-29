@@ -420,17 +420,17 @@ def perform_raffle_reset_if_requested():
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
 
-RAFFLE_START_DATE = "2026-07-22"
-SIMULATED_START_DATE = "2026-07-25"
-INITIAL_TICKETS = 20
+RAFFLE_START_DATE = "2026-07-28"
+SIMULATED_START_DATE = "2026-07-28"
+INITIAL_TICKETS = 500
 DEDICATED_DAYS = 12
-RAFFLE_ID = "goodwill-raffle-2026-round4"
+RAFFLE_ID = "goodwill-raffle-2026-round5"
 
 # --------------------------------------------------
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
