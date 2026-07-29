@@ -2047,7 +2047,7 @@ def address_toggles():
     Controlled via environment variables (default: true).
     """
     toggles = {
-        "usa": os.environ.get("ADDRESS_TOGGLE_USA", "true").lower() == "false",
+        "usa": os.environ.get("ADDRESS_TOGGLE_USA", "true").lower() == "true",
         "canada": os.environ.get("ADDRESS_TOGGLE_CANADA", "true").lower() == "false",
         "australia": os.environ.get("ADDRESS_TOGGLE_AUSTRALIA", "true").lower() == "false",
         "newZealand": os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "true",
