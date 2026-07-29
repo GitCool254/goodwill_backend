@@ -119,6 +119,14 @@ CORS(
                 "https://goodwillstores.vercel.app",
             ]
         },
+        r"/address_toggles": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
     },
 )
 
@@ -430,7 +438,7 @@ RAFFLE_ID = "goodwill-raffle-2026-round5"
 # RAFFLE RESET CONTROL (MANUAL CAMPAIGN RESTART)
 # --------------------------------------------------
 
-RAFFLE_RESET_FLAG = True  # 🔁 Set to True to reset campaign
+RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
@@ -2031,6 +2039,20 @@ def get_referral_rewards():
                 break
         return jsonify({"credits": credits}), 200
 
+@app.route("/address_toggles", methods=["GET"])
+@limiter.limit("10 per minute")
+def address_toggles():
+    """
+    Returns toggle status for each country's address locations.
+    Controlled via environment variables (default: true).
+    """
+    toggles = {
+        "usa": os.environ.get("ADDRESS_TOGGLE_USA", "true").lower() == "false",
+        "canada": os.environ.get("ADDRESS_TOGGLE_CANADA", "true").lower() == "false",
+        "australia": os.environ.get("ADDRESS_TOGGLE_AUSTRALIA", "true").lower() == "false",
+        "newZealand": os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "true",
+    }
+    return jsonify(toggles), 200
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
 # --------------------------------------------------
