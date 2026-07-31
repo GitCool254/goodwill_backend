@@ -2049,8 +2049,8 @@ def address_toggles():
     toggles = {
         "usa": os.environ.get("ADDRESS_TOGGLE_USA", "true").lower() == "false",
         "canada": os.environ.get("ADDRESS_TOGGLE_CANADA", "true").lower() == "false",
-        "australia": os.environ.get("ADDRESS_TOGGLE_AUSTRALIA", "true").lower() == "false",
-        "newZealand": os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "true",
+        "australia": os.environ.get("ADDRESS_TOGGLE_AUSTRALIA", "true").lower() == "true",
+        "newZealand": os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "false",
     }
     return jsonify(toggles), 200
 # --------------------------------------------------
