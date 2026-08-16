@@ -428,10 +428,10 @@ def perform_raffle_reset_if_requested():
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
 
-RAFFLE_START_DATE = "2026-07-28"
-SIMULATED_START_DATE = "2026-07-28"
-INITIAL_TICKETS = 500
-DEDICATED_DAYS = 12
+RAFFLE_START_DATE = "2026-08-12"
+SIMULATED_START_DATE = "2026-08-15"
+INITIAL_TICKETS = 250
+DEDICATED_DAYS = 20
 RAFFLE_ID = "goodwill-raffle-2026-round5"
 
 # --------------------------------------------------
