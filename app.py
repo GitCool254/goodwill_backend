@@ -2069,7 +2069,7 @@ def winners_detail_toggle():
     Returns a boolean indicating whether to show the WinnersDetail component.
     Controlled via environment variable SHOW_WINNERS_DETAIL (default: true).
     """
-    show = os.environ.get("SHOW_WINNERS_DETAIL", "true").lower() == "true"
+    show = os.environ.get("SHOW_WINNERS_DETAIL", "true").lower() == "false"
     return jsonify({"show": show}), 200
 
 # --------------------------------------------------
