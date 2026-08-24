@@ -127,6 +127,14 @@ CORS(
                 "https://goodwillstores.vercel.app",
             ]
         },
+        r"/winners_detail_toggle": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
     },
 )
 
@@ -2053,6 +2061,17 @@ def address_toggles():
         "newZealand": os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "false",
     }
     return jsonify(toggles), 200
+
+@app.route("/winners_detail_toggle", methods=["GET"])
+@limiter.limit("10 per minute")
+def winners_detail_toggle():
+    """
+    Returns a boolean indicating whether to show the WinnersDetail component.
+    Controlled via environment variable SHOW_WINNERS_DETAIL (default: true).
+    """
+    show = os.environ.get("SHOW_WINNERS_DETAIL", "true").lower() == "true"
+    return jsonify({"show": show}), 200
+
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
 # --------------------------------------------------
