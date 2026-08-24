@@ -1937,7 +1937,7 @@ def redownload_ticket():
 # RECENT WINNERS (Announcement Feature)
 # --------------------------------------------------
 RECENT_WINNERS_FILE = os.path.join(BASE_DIR, "recent_winners.json")
-SHOW_RECENT_WINNERS = os.environ.get("SHOW_RECENT_WINNERS", "false").lower() == "true"
+SHOW_RECENT_WINNERS = os.environ.get("SHOW_RECENT_WINNERS", "false").lower() == "false"
 
 def load_recent_winners():
     """Loads recent winners from local JSON file."""
@@ -2069,7 +2069,7 @@ def winners_detail_toggle():
     Returns a boolean indicating whether to show the WinnersDetail component.
     Controlled via environment variable SHOW_WINNERS_DETAIL (default: true).
     """
-    show = os.environ.get("SHOW_WINNERS_DETAIL", "true").lower() == "false"
+    show = os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "false"
     return jsonify({"show": show}), 200
 
 # --------------------------------------------------
