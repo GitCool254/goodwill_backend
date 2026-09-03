@@ -135,6 +135,14 @@ CORS(
                 "https://goodwillstores.vercel.app",
             ]
         },
+        r"/get_sku": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
     },
 )
 
@@ -2071,6 +2079,47 @@ def winners_detail_toggle():
     """
     show = os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true"
     return jsonify({"show": show}), 200
+
+# --------------------------------------------------
+# SKU GENERATION (Deterministic per product)
+# --------------------------------------------------
+def generate_sku(product_title):
+    """
+    Generate a deterministic 13‑character alphanumeric SKU for a product.
+    Uses SHA‑256 of the product title + a secret salt, then converts to base36
+    and takes the first 13 characters.
+    """
+    secret_salt = os.environ.get("SKU_SALT", "goodwillstores_2026_salt")
+    hash_input = f"{product_title}|{secret_salt}".encode()
+    hash_digest = hashlib.sha256(hash_input).hexdigest()
+    # Convert hex digest to a large integer
+    hash_int = int(hash_digest, 16)
+    # Convert to base36 (0-9A-Z)
+    chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    result = []
+    if hash_int == 0:
+        return "GWS" + "0" * 13
+    while hash_int > 0:
+        hash_int, rem = divmod(hash_int, 36)
+        result.append(chars[rem])
+    sku_base = ''.join(reversed(result))
+    # Ensure at least 13 characters, pad with leading '0' if necessary
+    sku = "GWS" + (sku_base[:13]).zfill(13)
+    return sku
+
+@app.route("/get_sku", methods=["POST"])
+@limiter.limit("10 per minute")
+def get_sku():
+    """
+    Returns a deterministic SKU for a given product title.
+    Expects JSON: { "product_title": "Product Name" }
+    """
+    data = request.get_json(force=True)
+    product_title = data.get("product_title", "").strip()
+    if not product_title:
+        return jsonify({"error": "Missing product_title"}), 400
+    sku = generate_sku(product_title)
+    return jsonify({"sku": sku}), 200
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
