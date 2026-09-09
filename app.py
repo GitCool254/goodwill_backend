@@ -21,6 +21,8 @@ import re
 import uuid
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+import qrcode
+from PIL import Image
 
 # APP SETUP
 app = Flask(__name__)
@@ -147,7 +149,7 @@ CORS(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "Raffle_Ticket_TemplateNew.pdf")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "Goodwillstores_Ticket_Template2.pdf")
 # Service account key (already in your Termux setup)
 GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
 GSHEET_ID = os.environ.get("GSHEET_ID")
@@ -1162,7 +1164,7 @@ def generate_ticket_no():
     return f"GWS-{uuid.uuid4().hex[:8].upper()}"
 
 def generate_ticket_with_placeholders(
-    full_name, ticket_no, event_date, ticket_price, event_place, event_time
+    full_name, ticket_no, event_date, ticket_price, event_place, event_time, product_title
 ):
 
     if not os.path.exists(TEMPLATE_PATH):
@@ -1247,6 +1249,43 @@ def generate_ticket_with_placeholders(
                 fontname=fontname,
                 color=(0, 0, 0),
             )
+
+            # ------------------- QR CODE PLACEHOLDER ----------------
+            # Build QR data string
+            qr_data = (
+                f"Goodwillstores\n"
+                f"Product: {product_title}\n"
+                f"{full_name} - {ticket_no}\n"
+                f"{event_date}"
+            )
+
+            # Generate QR code image as bytes
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=6,
+                border=2,
+            )
+            qr.add_data(qr_data)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+
+            # Search for the placeholder "{{QR_CODE}}" and replace with the QR image
+            qr_placeholder = "{{QR_CODE}}"
+            rects = page.search_for(qr_placeholder)
+            if rects:
+                # Use the first rectangle found
+                rect = rects[0]
+                # Clear the placeholder text
+                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+                # Insert the QR code image
+                page.insert_image(rect, stream=img_bytes, keep_proportions=True)
+            else:
+                # If placeholder not found, log a warning (optional)
+                print(f"⚠️ QR placeholder '{{QR_CODE}}' not found in template for ticket {ticket_no}")
 
     output = io.BytesIO()
     doc.save(output)
@@ -1741,6 +1780,7 @@ def generate_ticket():
                 str(ticket_price),
                 event_place,
                 EVENT_TIME,
+                product_title,
             )
 
             order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
@@ -1811,6 +1851,7 @@ def generate_ticket():
                     str(ticket_price),
                     event_place,
                     EVENT_TIME,
+                    product_title,
                 )
 
                 name = f"RaffleTicket_{ticket_no}.pdf"
