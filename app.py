@@ -150,7 +150,7 @@ CORS(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "Goodwillstores_Ticket_Template5.pdf")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "Goodwillstores_Ticket_Template6.pdf")
 # Service account key (already in your Termux setup)
 GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
 GSHEET_ID = os.environ.get("GSHEET_ID")
