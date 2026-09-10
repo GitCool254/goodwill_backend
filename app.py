@@ -442,6 +442,25 @@ def perform_raffle_reset_if_requested():
     # IMPORTANT: turn flag off after reset
     print("⚠️ Remember to set RAFFLE_RESET_FLAG back to False after deployment.")
 
+def perform_cmst_reset_if_requested():
+    if not CMST_RESET_FLAG:
+        return
+
+    print("🔁 CMST RESET INITIATED")
+
+    if r2_client:
+        try:
+            r2_client.delete_object(Bucket=R2_BUCKET_NAME, Key=CMST_KEY)
+            print("🗑 Deleted R2 cmst_records")
+        except Exception:
+            pass
+
+    if os.path.exists(CMST_FILE):
+        os.remove(CMST_FILE)
+        print("🗑 Deleted local cmst_records.json")
+
+    print("⚠️ Remember to set CMST_RESET_FLAG back to False after deployment.")
+
 # --------------------------------------------------
 # DAILY TICKET DECAY (AUTHORITATIVE)
 # --------------------------------------------------
@@ -457,6 +476,7 @@ RAFFLE_ID = "goodwill-raffle-2026-round5"
 # --------------------------------------------------
 
 RAFFLE_RESET_FLAG = False  # 🔁 Set to True to reset campaign
+CMST_RESET_FLAG = False  # 🔁 Set to True to reset CMST records
 
 RAFFLE_META_FILE = os.path.join(BASE_DIR, "raffle_meta.json")
 RAFFLE_META_KEY = "state/raffle_meta.json"
@@ -605,6 +625,10 @@ EMAIL_INDEX_KEY = "indexes/email_orders.json"
 USED_ORDERS_KEY = "indexes/used_orders.json"
 REFERRALS_FILE = os.path.join(BASE_DIR, "referrals.json")
 REFERRALS_KEY = "state/referrals.json"
+CMST_FILE = os.path.join(BASE_DIR, "cmst_records.json")
+CMST_KEY = "state/cmst_records.json"
+CMST_LOCK_FILE = os.path.join(BASE_DIR, "cmst.lock")
+cmst_lock = FileLock(CMST_LOCK_FILE)
 
 # ===============================
 # Cloudflare R2 (Storage Only) Step 1R
@@ -883,6 +907,69 @@ def save_referrals(data):
             pass
     with open(REFERRALS_FILE, "w") as f:
         f.write(payload.decode())
+
+# --------------------------------------------------
+# CMST NUMBER SYSTEM (unique progressive number per email)
+# --------------------------------------------------
+def load_cmst_records():
+    # 1️⃣ R2 primary
+    if r2_client:
+        try:
+            obj = r2_client.get_object(Bucket=R2_BUCKET_NAME, Key=CMST_KEY)
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+    # 2️⃣ Local fallback
+    if os.path.exists(CMST_FILE):
+        try:
+            with open(CMST_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_cmst_records(data):
+    payload = json.dumps(data, indent=2).encode()
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=CMST_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception:
+            pass
+    with open(CMST_FILE, "w") as f:
+        f.write(payload.decode())
+
+
+def get_or_assign_cmst(email):
+    """
+    Returns the CMST number for the given email.
+    If the email has no number yet, assign the next available number (100–1000).
+    """
+    with cmst_lock:
+        records = load_cmst_records()
+
+        # Return existing if already assigned
+        if email in records:
+            return int(records[email])
+
+        # Find the next available number
+        used = set(int(v) for v in records.values())
+        next_no = 100
+        while next_no in used:
+            next_no += 1
+        if next_no > 1000:
+            raise ValueError("CMST number limit reached (1000)")
+
+        records[email] = next_no
+        save_cmst_records(records)
+        print(f"🆔 CMST assigned: {email} -> CMST No {next_no}")
+        return next_no
 
 def register_order(order_id, email, files, product, quantity, ticket_numbers, user_local_time=None):
     index = load_orders_index()
@@ -1164,7 +1251,7 @@ def generate_ticket_no():
     return f"GWS-{uuid.uuid4().hex[:8].upper()}"
 
 def generate_ticket_with_placeholders(
-    full_name, ticket_no, event_date, ticket_price, event_place, event_time, product_title
+    full_name, ticket_no, event_date, ticket_price, event_place, event_time, product_title, cmst_no
 ):
 
     if not os.path.exists(TEMPLATE_PATH):
@@ -1256,7 +1343,8 @@ def generate_ticket_with_placeholders(
                 f"GOODWILLSTORES\n"
                 f"PRODUCT: {str(product_title).upper()}\n"
                 f"NAME: {str(full_name).upper()}\n"
-                f"TICKET NO: {str(ticket_no).upper()}"
+                f"TICKET NO: {str(ticket_no).upper()}\n"
+                f"CMST NO: {str(cmst_no)}"
             )
 
             # Generate QR code image as bytes
@@ -1784,6 +1872,13 @@ def generate_ticket():
                         save_referrals(referrals)
                         print(f"🎁 Referral applied: {referral_code} earned a credit")
 
+    # ---- Assign CMST number for this email ----
+    try:
+        cmst_no = get_or_assign_cmst(email)
+    except Exception as e:
+        print(f"❌ CMST assignment failed: {e}")
+        return jsonify({"error": "CMST assignment failed"}), 500
+
     try:
         if effective_quantity == 1:
             ticket_no = generate_ticket_no()
@@ -1796,6 +1891,7 @@ def generate_ticket():
                 event_place,
                 EVENT_TIME,
                 product_title,
+                cmst_no,
             )
 
             order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
@@ -1867,6 +1963,7 @@ def generate_ticket():
                     event_place,
                     EVENT_TIME,
                     product_title,
+                    cmst_no,
                 )
 
                 name = f"RaffleTicket_{ticket_no}.pdf"
@@ -2182,6 +2279,7 @@ def get_sku():
 # --------------------------------------------------
 try:
     perform_raffle_reset_if_requested()  # 🔁 campaign reset
+    perform_cmst_reset_if_requested() # 🔁 CMST reset
     cleanup_old_orders()
     cleanup_old_r2_objects()
 except Exception as e:
