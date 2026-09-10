@@ -1202,7 +1202,7 @@ def generate_ticket_with_placeholders(
         for rect in matches:
             text_str = str(value)
             fontname = "helv"
-            fontsize = 12
+            fontsize = 10
 
             # --- Measure text width ---
             text_width = fitz.get_text_length(
@@ -1273,19 +1273,34 @@ def generate_ticket_with_placeholders(
             img.save(img_bytes, format="PNG")
             img_bytes.seek(0)
 
-            # Search for the placeholder "{{QR_CODE}}" and replace with the QR image
             qr_placeholder = "{{QR_CODE}}"
             rects = page.search_for(qr_placeholder)
+
             if rects:
-                # Use the first rectangle found
                 rect = rects[0]
-                # Clear the placeholder text
+
+                # clear original placeholder text
                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-                # Insert the QR code image
-                page.insert_image(rect, stream=img_bytes, keep_proportion=True)
+
+                # create a STANDARD SQUARE QR AREA
+                qr_size = 80  # points
+
+                qr_rect = fitz.Rect(
+                    rect.x0,
+                    rect.y0,
+                    rect.x0 + qr_size,
+                    rect.y0 + qr_size
+                )
+
+                page.insert_image(
+                    qr_rect,
+                    stream=img_bytes,
+                    keep_proportion=True
+                )
             else:
-                # If placeholder not found, log a warning (optional)
-                print(f"⚠️ QR placeholder '{{QR_CODE}}' not found in template for ticket {ticket_no}")
+                print(
+                    f"⚠️ QR placeholder '{{QR_CODE}}' not found in template for ticket {ticket_no}"
+                )
 
     output = io.BytesIO()
     doc.save(output)
