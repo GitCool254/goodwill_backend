@@ -1282,7 +1282,7 @@ def generate_ticket_with_placeholders(
                 # Clear the placeholder text
                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                 # Insert the QR code image
-                page.insert_image(rect, stream=img_bytes, keep_proportions=True)
+                page.insert_image(rect, stream=img_bytes, keep_proportion=True)
             else:
                 # If placeholder not found, log a warning (optional)
                 print(f"⚠️ QR placeholder '{{QR_CODE}}' not found in template for ticket {ticket_no}")
