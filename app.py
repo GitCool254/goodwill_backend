@@ -16,7 +16,8 @@ import math
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from time import time
-from filelock import FileLock
+from filelock import FileLock, Timeout
+import threading
 import re
 import uuid
 from google.oauth2 import service_account
@@ -628,7 +629,13 @@ REFERRALS_KEY = "state/referrals.json"
 CMST_FILE = os.path.join(BASE_DIR, "cmst_records.json")
 CMST_KEY = "state/cmst_records.json"
 CMST_LOCK_FILE = os.path.join(BASE_DIR, "cmst.lock")
-cmst_lock = FileLock(CMST_LOCK_FILE)
+
+# Two-layer lock:
+#  • cmst_thread_lock  → protects against concurrent threads inside one worker process
+#  • cmst_lock         → protects against concurrent worker processes (gunicorn workers)
+#    timeout=15        → prevents infinite deadlock if a worker crashes mid-lock
+cmst_thread_lock = threading.Lock()
+cmst_lock = FileLock(CMST_LOCK_FILE, timeout=15)
 
 # ===============================
 # Cloudflare R2 (Storage Only) Step 1R
@@ -949,27 +956,40 @@ def save_cmst_records(data):
 def get_or_assign_cmst(email):
     """
     Returns the CMST number for the given email.
-    If the email has no number yet, assign the next available number (100–1000).
+    Thread-safe + process-safe via two-layer locking:
+      • cmst_thread_lock  → in-process (threads)
+      • cmst_lock         → cross-process (gunicorn workers), 15s timeout
+    Retries up to 3 times if the file lock times out.
     """
-    with cmst_lock:
-        records = load_cmst_records()
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            with cmst_thread_lock:                 # in-process
+                with cmst_lock:                    # cross-process, 15s timeout
+                    records = load_cmst_records()
 
-        # Return existing if already assigned
-        if email in records:
-            return int(records[email])
+                    # Return existing if already assigned
+                    if email in records:
+                        return int(records[email])
 
-        # Find the next available number
-        used = set(int(v) for v in records.values())
-        next_no = 100
-        while next_no in used:
-            next_no += 1
-        if next_no > 1000:
-            raise ValueError("CMST number limit reached (1000)")
+                    # Find the next available number
+                    used = set(int(v) for v in records.values())
+                    next_no = 100
+                    while next_no in used:
+                        next_no += 1
+                    if next_no > 1000:
+                        raise ValueError("CMST number limit reached (1000)")
 
-        records[email] = next_no
-        save_cmst_records(records)
-        print(f"🆔 CMST assigned: {email} -> CMST No {next_no}")
-        return next_no
+                    records[email] = next_no
+                    save_cmst_records(records)
+                    print(f"🆔 CMST assigned: {email} -> CMST No {next_no}")
+                    return next_no
+
+        except Timeout:
+            print(f"⚠️ CMST lock timeout (attempt {attempt}/{max_retries})")
+            if attempt == max_retries:
+                raise RuntimeError("CMST lock acquisition failed after retries")
+            time.sleep(0.5)
 
 def register_order(order_id, email, files, product, quantity, ticket_numbers, user_local_time=None):
     index = load_orders_index()
