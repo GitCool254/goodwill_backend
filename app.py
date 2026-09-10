@@ -1251,12 +1251,12 @@ def generate_ticket_with_placeholders(
             )
 
             # ------------------- QR CODE PLACEHOLDER ----------------
-            # Build QR data string
+            # Build QR data string (4 lines, ALL CAPS)
             qr_data = (
-                f"Goodwillstores\n"
-                f"Product: {product_title}\n"
-                f"{full_name} - {ticket_no}\n"
-                f"{event_date}"
+                f"GOODWILLSTORES\n"
+                f"PRODUCT: {str(product_title).upper()}\n"
+                f"NAME: {str(full_name).upper()}\n"
+                f"TICKET NO: {str(ticket_no).upper()}"
             )
 
             # Generate QR code image as bytes
