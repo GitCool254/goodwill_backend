@@ -1283,7 +1283,7 @@ def generate_ticket_with_placeholders(
                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
 
                 # create a STANDARD SQUARE QR AREA
-                qr_size = 80  # points
+                qr_size = 100  # points
 
                 qr_rect = fitz.Rect(
                     rect.x0,
