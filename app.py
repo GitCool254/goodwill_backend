@@ -1346,55 +1346,62 @@ def generate_ticket_with_placeholders(
 
             # --- Clear background ---
             if placeholder == "{{NAME_SMALL}}":
-                # Remove the placeholder AND the word that follows it on the
-                # same line, then redraw them tightly together so the first
-                # name sits right next to the following punctuation / word.
-                # Images and line-art are preserved (0 == PDF_REDACT_IMAGE_NONE).
+                # Replace only the NAME_SMALL placeholder and its existing
+                # exclamation mark. Do NOT clear the whitespace before "Thank".
+                #
+                # The template contains:
+                # "Congratulations {{NAME_SMALL}}! Thank..."
+                #
+                # We redraw the first name together with "!" so the result is:
+                # "Congratulations John! Thank..."
+                #
+                # This prevents the old redaction logic from creating a large
+                # invisible/cleared rectangle between the name and "Thank".
 
-                next_word = None
-                try:
-                    words = page.get_text("words")
-                    y_center = (rect.y0 + rect.y1) / 2
-                    candidates = [
-                        w for w in words
-                        if abs(((w[1] + w[3]) / 2) - y_center) < 6   # same line
-                        and w[0] >= rect.x1 - 1                     # starts at/after placeholder
-                    ]
-                    candidates.sort(key=lambda w: w[0])
-                    if candidates:
-                        next_word = candidates[0]
-                except Exception:
-                    next_word = None
+                name_small_rect = fitz.Rect(
+                    rect.x0,
+                    rect.y0,
+                    rect.x1 + 2,
+                    rect.y1
+                )
 
-                if next_word is not None:
-                    nw_x0, nw_y0, nw_x1, nw_y1, nw_text = next_word[:5]
-                    # Redact the placeholder AND the following word together
-                    redact_rect = fitz.Rect(rect.x0, rect.y0, nw_x1, rect.y1)
-                    page.add_redact_annot(redact_rect, fill=False)
-                    page.apply_redactions(images=0)
+                # Include the template's existing "!" immediately after
+                # {{NAME_SMALL}}, but do not extend toward "Thank".
+                exclamation_rect = fitz.Rect(
+                    rect.x1,
+                    rect.y0,
+                    rect.x1 + 3,
+                    rect.y1
+                )
 
-                    # Tightly redraw "first_name" + next word.
-                    # No space before punctuation; one space otherwise.
-                    sep = "" if nw_text[:1] in "!?.,;:" else " "
-                    redraw_text = f"{first_name}{sep}{nw_text}"
+                redact_rect = name_small_rect | exclamation_rect
 
-                    # Vertical baseline, matched to the placeholder's own size
-                    y_pos = (rect.y0 + rect.y1) / 2 + (fontsize * 0.35)
-                    page.insert_text(
-                        (rect.x0 + 2, y_pos),
-                        redraw_text,
-                        fontsize=fontsize,
-                        fontname="helv",
-                        color=(0, 0, 0),
-                    )
-                    # Skip the generic draw path for this rect
-                    continue
-                else:
-                    # No next word found → fall back to plain redaction
-                    page.add_redact_annot(rect, fill=False)
-                    page.apply_redactions(images=0)
+                page.add_redact_annot(redact_rect, fill=False)
+                page.apply_redactions(images=0)
+
+                # Draw the first name and punctuation as one grammatical unit.
+                text_str = f"{text_str}!"
+
+                # Recalculate width for the actual replacement text.
+                text_width = fitz.get_text_length(
+                    text_str,
+                    fontname=fontname,
+                    fontsize=fontsize
+                )
+
+                flex_rect = fitz.Rect(
+                    rect.x0,
+                    rect.y0,
+                    rect.x0 + text_width + 2,
+                    rect.y1
+                )
+
             else:
-                page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
+                page.draw_rect(
+                    flex_rect,
+                    color=(1, 1, 1),
+                    fill=(1, 1, 1)
+                )
 
 
             # --- Auto-shrink font to fit ---
