@@ -338,6 +338,21 @@ def load_ticket_state():
 
 
 def save_ticket_state(state):
+    # ----------------------------------------------------------
+    # Record the moment the raffle FIRST reached zero remaining.
+    # This timestamp is immutable — once set it is never re-written.
+    # It anchors the 48-hour countdown after which all issued
+    # tickets are marked EXPIRED.
+    # ----------------------------------------------------------
+    try:
+        remaining_val = int(state.get("remaining") or 0)
+    except Exception:
+        remaining_val = 0
+
+    if remaining_val <= 0 and not state.get("sold_out_at"):
+        state["sold_out_at"] = datetime.utcnow().isoformat() + "Z"
+        print(f"🏁 Raffle sold out at {state['sold_out_at']}")
+
     payload = json.dumps(state, indent=2).encode()
 
     # 1️⃣ R2 primary
@@ -2657,10 +2672,15 @@ def get_sku():
     sku = generate_sku(product_title)
     return jsonify({"sku": sku}), 200
 
-
 # --------------------------------------------------
 # PUBLIC TICKET VERIFICATION
 # --------------------------------------------------
+
+# Number of hours after the raffle first sells out, after which
+# every issued ticket is permanently marked EXPIRED.
+TICKET_EXPIRY_HOURS_AFTER_SOLD_OUT = 48
+
+
 @app.route("/verify_ticket/<token>", methods=["GET"])
 @limiter.limit("20 per minute")
 def verify_ticket(token):
@@ -2670,6 +2690,12 @@ def verify_ticket(token):
 
     The token is a URL-safe random string (see generate_ticket_verification_token).
     It contains no personally-identifying information.
+
+    Expiry rule:
+        A ticket becomes EXPIRED exactly 48 hours after the raffle
+        first reached zero remaining tickets (ticket_state["sold_out_at"]).
+        Once a record has been marked EXPIRED it is NEVER reverted to
+        ACTIVE or any other status.
     """
     # Basic token format validation (A-Z, a-z, 0-9, -, _)
     if not token or not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", token):
@@ -2686,6 +2712,44 @@ def verify_ticket(token):
             "message": "We could not find a ticket for this verification link."
         }), 404
 
+    # ----------------------------------------------------------
+    # EXPIRY CHECK
+    # ----------------------------------------------------------
+    # Only escalate ACTIVE → EXPIRED.
+    # Never revert EXPIRED back to any other status.
+    # ----------------------------------------------------------
+    if record.get("status") != "EXPIRED":
+        try:
+            ticket_state = load_ticket_state() or {}
+        except Exception:
+            ticket_state = {}
+
+        sold_out_at_str = ticket_state.get("sold_out_at")
+
+        if sold_out_at_str:
+            try:
+                sold_out_at = datetime.fromisoformat(
+                    sold_out_at_str.replace("Z", "+00:00")
+                ).replace(tzinfo=None)
+
+                expiry_time = sold_out_at + timedelta(
+                    hours=TICKET_EXPIRY_HOURS_AFTER_SOLD_OUT
+                )
+
+                if datetime.utcnow() >= expiry_time:
+                    # Permanently mark this ticket EXPIRED.
+                    record["status"] = "EXPIRED"
+                    record["expired_at"] = (
+                        datetime.utcnow().isoformat() + "Z"
+                    )
+                    save_ticket_verification_record(token, record)
+                    print(
+                        f"⌛ Ticket {record.get('ticket_no')} marked EXPIRED "
+                        f"(raffle sold out at {sold_out_at_str})"
+                    )
+            except Exception as e:
+                print(f"⚠️ Expiry check failed for token {token}: {e}")
+
     # Return only what the verification page needs (no full email for privacy).
     return jsonify({
         "status": "VALID",
@@ -2696,7 +2760,9 @@ def verify_ticket(token):
         "created_at": record.get("created_at"),
         "raffle_id": record.get("raffle_id"),
         "ticket_status": record.get("status", "ACTIVE"),
+        "expired_at": record.get("expired_at"),
     }), 200
+
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
