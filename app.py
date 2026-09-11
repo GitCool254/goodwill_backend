@@ -1346,55 +1346,90 @@ def generate_ticket_with_placeholders(
 
             # --- Clear background ---
             if placeholder == "{{NAME_SMALL}}":
-                # Replace only the NAME_SMALL placeholder and its existing
-                # exclamation mark. Do NOT clear the whitespace before "Thank".
+                # The complete congratulatory message is redrawn as one
+                # continuous sentence so the first name, "!", and "Thank"
+                # remain grammatically spaced with no leftover placeholder gap.
                 #
-                # The template contains:
-                # "Congratulations {{NAME_SMALL}}! Thank..."
+                # Template:
+                # "Congratulations {{NAME_SMALL}}! Thank you for participating
+                #  with Goodwillstores. We wish you the best of luck!"
                 #
-                # We redraw the first name together with "!" so the result is:
-                # "Congratulations John! Thank..."
-                #
-                # This prevents the old redaction logic from creating a large
-                # invisible/cleared rectangle between the name and "Thank".
+                # Only this congratulatory message line is replaced.
+                # Everything else in the ticket remains unchanged.
 
-                name_small_rect = fitz.Rect(
-                    rect.x0,
-                    rect.y0,
-                    rect.x1 + 2,
-                    rect.y1
-                )
+                words = page.get_text("words")
 
-                # Include the template's existing "!" immediately after
-                # {{NAME_SMALL}}, but do not extend toward "Thank".
-                exclamation_rect = fitz.Rect(
-                    rect.x1,
-                    rect.y0,
-                    rect.x1 + 3,
-                    rect.y1
-                )
+                # Locate the complete congratulatory message line.
+                line_words = [
+                    w for w in words
+                    if abs(
+                        ((w[1] + w[3]) / 2)
+                        - ((rect.y0 + rect.y1) / 2)
+                    ) < 3
+                ]
+                line_words.sort(key=lambda w: w[0])
 
-                redact_rect = name_small_rect | exclamation_rect
+                if line_words:
+                    sentence_rect = fitz.Rect(
+                        line_words[0][0],
+                        min(w[1] for w in line_words),
+                        line_words[-1][2],
+                        max(w[3] for w in line_words),
+                    )
 
-                page.add_redact_annot(redact_rect, fill=False)
-                page.apply_redactions(images=0)
+                    # Clear only the existing congratulatory message line.
+                    page.add_redact_annot(sentence_rect, fill=False)
+                    page.apply_redactions(images=0)
 
-                # Draw the first name and punctuation as one grammatical unit.
-                text_str = f"{text_str}!"
+                    # Rebuild the complete sentence with normal text spacing.
+                    text_str = (
+                        f"Congratulations {first_name}! "
+                        f"Thank you for participating with Goodwillstores. "
+                        f"We wish you the best of luck!"
+                    )
 
-                # Recalculate width for the actual replacement text.
-                text_width = fitz.get_text_length(
-                    text_str,
-                    fontname=fontname,
-                    fontsize=fontsize
-                )
+                    fontname = "helv"
+                    fontsize = 7
 
-                flex_rect = fitz.Rect(
-                    rect.x0,
-                    rect.y0,
-                    rect.x0 + text_width + 2,
-                    rect.y1
-                )
+                    # Keep the original left position and vertical position.
+                    flex_rect = fitz.Rect(
+                        sentence_rect.x0,
+                        sentence_rect.y0,
+                        sentence_rect.x1,
+                        sentence_rect.y1,
+                    )
+
+                    # Automatically reduce only if the rebuilt sentence
+                    # would exceed the original sentence width.
+                    while fontsize > 6:
+                        text_width = fitz.get_text_length(
+                            text_str,
+                            fontname=fontname,
+                            fontsize=fontsize
+                        )
+
+                        if text_width <= flex_rect.width:
+                            break
+
+                        fontsize -= 1
+
+                    # Insert the complete sentence as one continuous line.
+                    page.insert_text(
+                        (
+                            flex_rect.x0,
+                            flex_rect.y0
+                            + (flex_rect.height / 2)
+                            + (fontsize * 0.35)
+                        ),
+                        text_str,
+                        fontsize=fontsize,
+                        fontname=fontname,
+                        color=(0, 0, 0),
+                    )
+
+                    # Prevent the normal placeholder insertion below from
+                    # inserting the first name a second time.
+                    continue
 
             else:
                 page.draw_rect(
