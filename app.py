@@ -1351,7 +1351,7 @@ def generate_ticket_with_placeholders(
                 # NOTE: 0 == PDF_REDACT_IMAGE_NONE, 0 == PDF_REDACT_LINE_ART_NONE.
                 # Using numeric values for cross-version compatibility.
                 page.add_redact_annot(rect, fill=False)
-                page.apply_redactions(images=0, graphics=0)
+                page.apply_redactions(images=0)
             else:
                 page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
 
