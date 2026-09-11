@@ -1346,11 +1346,34 @@ def generate_ticket_with_placeholders(
 
             # --- Clear background ---
             if placeholder == "{{NAME_SMALL}}":
-                # Remove the literal placeholder text WITHOUT painting
-                # a white rectangle, so the template's background stays visible.
-                # NOTE: 0 == PDF_REDACT_IMAGE_NONE, 0 == PDF_REDACT_LINE_ART_NONE.
-                # Using numeric values for cross-version compatibility.
-                page.add_redact_annot(rect, fill=False)
+                # Remove the literal placeholder text AND any trailing whitespace
+                # between it and the next visible word on the same line, so the
+                # printed first name has no wide gap after it.
+                # Images and line-art are preserved (0 == PDF_REDACT_IMAGE_NONE).
+
+                # Find the next visible word to the right on the same baseline
+                next_word_x0 = None
+                try:
+                    words = page.get_text("words")
+                    y_center = (rect.y0 + rect.y1) / 2
+                    candidates = [
+                        w for w in words
+                        if abs(((w[1] + w[3]) / 2) - y_center) < 6   # same line
+                        and w[0] >= rect.x1 - 1                     # starts at/after placeholder
+                    ]
+                    candidates.sort(key=lambda w: w[0])
+                    if candidates:
+                        next_word_x0 = candidates[0][0]
+                except Exception as _e:
+                    next_word_x0 = None
+
+                if next_word_x0 is not None and next_word_x0 > rect.x1:
+                    # Extend redaction to cover the whitespace up to the next word
+                    redact_rect = fitz.Rect(rect.x0, rect.y0, next_word_x0, rect.y1)
+                else:
+                    redact_rect = rect
+
+                page.add_redact_annot(redact_rect, fill=False)
                 page.apply_redactions(images=0)
             else:
                 page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
