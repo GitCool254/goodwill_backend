@@ -1346,13 +1346,12 @@ def generate_ticket_with_placeholders(
 
             # --- Clear background ---
             if placeholder == "{{NAME_SMALL}}":
-                # Remove the literal placeholder text AND any trailing whitespace
-                # between it and the next visible word on the same line, so the
-                # printed first name has no wide gap after it.
+                # Remove the placeholder AND the word that follows it on the
+                # same line, then redraw them tightly together so the first
+                # name sits right next to the following punctuation / word.
                 # Images and line-art are preserved (0 == PDF_REDACT_IMAGE_NONE).
 
-                # Find the next visible word to the right on the same baseline
-                next_word_x0 = None
+                next_word = None
                 try:
                     words = page.get_text("words")
                     y_center = (rect.y0 + rect.y1) / 2
@@ -1363,18 +1362,37 @@ def generate_ticket_with_placeholders(
                     ]
                     candidates.sort(key=lambda w: w[0])
                     if candidates:
-                        next_word_x0 = candidates[0][0]
-                except Exception as _e:
-                    next_word_x0 = None
+                        next_word = candidates[0]
+                except Exception:
+                    next_word = None
 
-                if next_word_x0 is not None and next_word_x0 > rect.x1:
-                    # Extend redaction to cover the whitespace up to the next word
-                    redact_rect = fitz.Rect(rect.x0, rect.y0, next_word_x0, rect.y1)
+                if next_word is not None:
+                    nw_x0, nw_y0, nw_x1, nw_y1, nw_text = next_word[:5]
+                    # Redact the placeholder AND the following word together
+                    redact_rect = fitz.Rect(rect.x0, rect.y0, nw_x1, rect.y1)
+                    page.add_redact_annot(redact_rect, fill=False)
+                    page.apply_redactions(images=0)
+
+                    # Tightly redraw "first_name" + next word.
+                    # No space before punctuation; one space otherwise.
+                    sep = "" if nw_text[:1] in "!?.,;:" else " "
+                    redraw_text = f"{first_name}{sep}{nw_text}"
+
+                    # Vertical baseline, matched to the placeholder's own size
+                    y_pos = (rect.y0 + rect.y1) / 2 + (fontsize * 0.35)
+                    page.insert_text(
+                        (rect.x0 + 2, y_pos),
+                        redraw_text,
+                        fontsize=fontsize,
+                        fontname="helv",
+                        color=(0, 0, 0),
+                    )
+                    # Skip the generic draw path for this rect
+                    continue
                 else:
-                    redact_rect = rect
-
-                page.add_redact_annot(redact_rect, fill=False)
-                page.apply_redactions(images=0)
+                    # No next word found → fall back to plain redaction
+                    page.add_redact_annot(rect, fill=False)
+                    page.apply_redactions(images=0)
             else:
                 page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
 
