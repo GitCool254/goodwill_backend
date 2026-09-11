@@ -1348,11 +1348,10 @@ def generate_ticket_with_placeholders(
             if placeholder == "{{NAME_SMALL}}":
                 # Remove the literal placeholder text WITHOUT painting
                 # a white rectangle, so the template's background stays visible.
+                # NOTE: 0 == PDF_REDACT_IMAGE_NONE, 0 == PDF_REDACT_LINE_ART_NONE.
+                # Using numeric values for cross-version compatibility.
                 page.add_redact_annot(rect, fill=False)
-                page.apply_redactions(
-                    images=fitz.PDF_REDACT_IMAGE_NONE,
-                    graphics=fitz.PDF_REDACT_LINE_ART_NONE,
-                )
+                page.apply_redactions(images=0, graphics=0)
             else:
                 page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
 
