@@ -150,7 +150,7 @@ CORS(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "Goodwillstores_Ticket_Template7.pdf")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "Goodwillstores_Ticket_Template8.pdf")
 # Service account key (already in your Termux setup)
 GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
 GSHEET_ID = os.environ.get("GSHEET_ID")
@@ -1282,7 +1282,7 @@ def generate_ticket_with_placeholders(
 
     # Per-placeholder font sizes (falls back to DEFAULT_FONT_SIZE)
     PLACEHOLDER_FONT_SIZES = {
-        "{{NAME_SMALL}}": 8,     # Small name placeholder
+        "{{NAME_SMALL}}": 7,     # Small name placeholder
         "{{NAME}}": 10,          # Legacy fallback
     }
     DEFAULT_FONT_SIZE = 10
@@ -1344,8 +1344,16 @@ def generate_ticket_with_placeholders(
                 rect.x0, rect.y0, rect.x0 + new_width, rect.y1
             )
 
-            # --- Clear background (skipped for {{NAME_SMALL}}
-            if placeholder != "{{NAME_SMALL}}":
+            # --- Clear background ---
+            if placeholder == "{{NAME_SMALL}}":
+                # Remove the literal placeholder text WITHOUT painting
+                # a white rectangle, so the template's background stays visible.
+                page.add_redact_annot(rect, fill=False)
+                page.apply_redactions(
+                    images=fitz.PDF_REDACT_IMAGE_NONE,
+                    graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                )
+            else:
                 page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
 
 
