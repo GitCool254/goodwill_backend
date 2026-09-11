@@ -1344,8 +1344,10 @@ def generate_ticket_with_placeholders(
                 rect.x0, rect.y0, rect.x0 + new_width, rect.y1
             )
 
-            # --- Clear background ---
-            page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
+            # --- Clear background (skipped for {{NAME_SMALL}}
+            if placeholder != "{{NAME_SMALL}}":
+                page.draw_rect(flex_rect, color=(1, 1, 1), fill=(1, 1, 1))
+
 
             # --- Auto-shrink font to fit ---
             while fontsize > 6:
