@@ -20,6 +20,7 @@ from filelock import FileLock, Timeout
 import threading
 import re
 import uuid
+import secrets
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import qrcode
@@ -139,6 +140,14 @@ CORS(
             ]
         },
         r"/get_sku": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
+        r"/verify_ticket/*": {
             "origins": [
                 "https://goodwillrafflestore.onrender.com",
                 "https://goodwillstores.onrender.com",
@@ -592,6 +601,207 @@ TICKET_STORAGE_DIR = os.environ.get(
 os.makedirs(TICKET_STORAGE_DIR, exist_ok=True)
 
 MAX_REDOWNLOADS = 3
+
+# --------------------------------------------------
+# TICKET VERIFICATION SYSTEM
+# --------------------------------------------------
+
+# Public frontend URL used inside ticket QR codes.
+# The QR points to the WEBSITE verification page,
+# NOT directly to the backend API.
+TICKET_VERIFY_BASE_URL = os.environ.get(
+    "TICKET_VERIFY_BASE_URL",
+    "https://goodwillstores.vercel.app/verify-ticket"
+)
+
+# Local fallback storage for individual verification records.
+VERIFICATION_STORAGE_DIR = os.path.join(
+    BASE_DIR,
+    "storage",
+    "ticket_verification"
+)
+
+os.makedirs(VERIFICATION_STORAGE_DIR, exist_ok=True)
+
+# R2 stores each verification record independently.
+# Individual objects avoid maintaining one large shared JSON index.
+VERIFICATION_R2_PREFIX = "verification/tickets/"
+
+
+def generate_ticket_verification_token():
+    """
+    Generates a cryptographically secure random token.
+
+    The token contains no customer information,
+    ticket number, product name, email, or other
+    predictable information.
+    """
+    return secrets.token_urlsafe(32)
+
+
+def build_ticket_verification_url(token):
+    """
+    Builds the public website URL encoded into the ticket QR code.
+    """
+    return f"{TICKET_VERIFY_BASE_URL.rstrip('/')}/{token}"
+
+
+def verification_record_local_path(token):
+    """
+    Returns the local fallback path for a verification record.
+    """
+    return os.path.join(
+        VERIFICATION_STORAGE_DIR,
+        f"{token}.json"
+    )
+
+
+def save_ticket_verification_record(token, record):
+    """
+    Persist a ticket verification record.
+
+    Primary:
+        Cloudflare R2
+
+    Fallback:
+        Local JSON file
+
+    Each ticket has its own record so verification records
+    do not depend on a single shared JSON index.
+    """
+
+    payload = json.dumps(
+        record,
+        indent=2
+    ).encode("utf-8")
+
+    # 1️⃣ R2 PRIMARY
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=f"{VERIFICATION_R2_PREFIX}{token}.json",
+                Body=payload,
+                ContentType="application/json",
+            )
+
+            print(
+                f"✅ Ticket verification record saved to R2: "
+                f"{record.get('ticket_no')}"
+            )
+            return
+
+        except Exception as e:
+            print(
+                "⚠️ R2 verification save failed, "
+                "using local fallback:",
+                e
+            )
+
+    # 2️⃣ LOCAL FALLBACK
+    try:
+        path = verification_record_local_path(token)
+
+        with open(path, "w") as f:
+            f.write(payload.decode("utf-8"))
+
+        print(
+            f"✅ Ticket verification record saved locally: "
+            f"{record.get('ticket_no')}"
+        )
+
+    except Exception as e:
+        print(
+            "❌ Failed to save local ticket verification record:",
+            e
+        )
+        raise
+
+
+def load_ticket_verification_record(token):
+    """
+    Load a ticket verification record.
+
+    Primary:
+        Cloudflare R2
+
+    Fallback:
+        Local JSON file
+
+    Returns:
+        dict if found
+        None if not found
+    """
+
+    # 1️⃣ R2 PRIMARY
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=f"{VERIFICATION_R2_PREFIX}{token}.json",
+            )
+
+            return json.loads(
+                obj["Body"].read()
+            )
+
+        except Exception:
+            pass
+
+    # 2️⃣ LOCAL FALLBACK
+    path = verification_record_local_path(token)
+
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+
+        except Exception as e:
+            print(
+                "❌ Failed to read local verification record:",
+                e
+            )
+
+    return None
+
+
+def create_ticket_verification_record(
+    token,
+    ticket_no,
+    full_name,
+    email,
+    product_title,
+    ticket_price,
+    cmst_no,
+    order_id,
+):
+    """
+    Creates the authoritative backend verification record
+    for one generated raffle ticket.
+
+    The record is created independently for every ticket.
+    """
+
+    record = {
+        "token": token,
+        "ticket_no": ticket_no,
+        "status": "ACTIVE",
+        "full_name": full_name,
+        "email": email,
+        "product": product_title,
+        "ticket_price": str(ticket_price),
+        "cmst_no": int(cmst_no),
+        "order_id": order_id,
+        "raffle_id": RAFFLE_ID,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    save_ticket_verification_record(
+        token=token,
+        record=record,
+    )
+
+    return record
 
 # --------------------------------------------------
 # CLEANUP POLICY
@@ -1271,7 +1481,7 @@ def generate_ticket_no():
     return f"GWS-{uuid.uuid4().hex[:8].upper()}"
 
 def generate_ticket_with_placeholders(
-    full_name, ticket_no, event_date, ticket_price, event_place, event_time, product_title, cmst_no
+    full_name, ticket_no, event_date, ticket_price, event_place, event_time, product_title, cmst_no, verification_url
 ):
 
     if not os.path.exists(TEMPLATE_PATH):
@@ -1461,58 +1671,77 @@ def generate_ticket_with_placeholders(
                 color=(0, 0, 0),
             )
 
-            # ------------------- QR CODE PLACEHOLDER ----------------
-            # Build QR data string (4 lines, ALL CAPS)
-            qr_data = (
-                f"GOODWILLSTORES\n"
-                f"PRODUCT: {str(product_title).upper()}\n"
-                f"NAME: {str(full_name).upper()}\n"
-                f"TICKET NO: {str(ticket_no).upper()}\n"
-                f"CMST NO: {str(cmst_no)}"
-            )
+                # ------------------- QR CODE -------------------
+                # The QR code contains ONLY the public verification URL.
+                #
+                # It does NOT contain:
+                # - customer name
+                # - email
+                # - product information
+                # - ticket number
+                # - CMST number
+                # - ticket status
+                #
+                # The backend remains the authoritative source of truth.
 
-            # Generate QR code image as bytes
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=6,
-                border=2,
-            )
-            qr.add_data(qr_data)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
-            img_bytes = io.BytesIO()
-            img.save(img_bytes, format="PNG")
-            img_bytes.seek(0)
+                qr_data = verification_url
 
-            qr_placeholder = "{{QR_CODE}}"
-            rects = page.search_for(qr_placeholder)
-
-            if rects:
-                rect = rects[0]
-
-                # clear original placeholder text
-                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-
-                # create a STANDARD SQUARE QR AREA
-                qr_size = 100  # points
-
-                qr_rect = fitz.Rect(
-                    rect.x0,
-                    rect.y0,
-                    rect.x0 + qr_size,
-                    rect.y0 + qr_size
+                qr = qrcode.QRCode(
+                    version=None,
+                    error_correction=qrcode.constants.ERROR_CORRECT_M,
+                    box_size=6,
+                    border=2,
                 )
 
-                page.insert_image(
-                    qr_rect,
-                    stream=img_bytes,
-                    keep_proportion=True
+                qr.add_data(qr_data)
+                qr.make(fit=True)
+
+                img = qr.make_image(
+                    fill_color="black",
+                    back_color="white"
                 )
-            else:
-                print(
-                    f"⚠️ QR placeholder '{{QR_CODE}}' not found in template for ticket {ticket_no}"
+
+                img_bytes = io.BytesIO()
+                img.save(
+                    img_bytes,
+                    format="PNG"
                 )
+                img_bytes.seek(0)
+
+                qr_placeholder = "{{QR_CODE}}"
+                rects = page.search_for(qr_placeholder)
+
+                if rects:
+                    rect = rects[0]
+
+                    # Clear original QR placeholder text.
+                    page.draw_rect(
+                        rect,
+                        color=(1, 1, 1),
+                        fill=(1, 1, 1)
+                    )
+
+                    # Standard square QR area.
+                    qr_size = 100
+
+                    qr_rect = fitz.Rect(
+                        rect.x0,
+                        rect.y0,
+                        rect.x0 + qr_size,
+                        rect.y0 + qr_size
+                    )
+
+                    page.insert_image(
+                        qr_rect,
+                        stream=img_bytes,
+                        keep_proportion=True
+                    )
+
+                else:
+                    print(
+                        f"⚠️ QR placeholder '{{QR_CODE}}' "
+                        f"not found in template for ticket {ticket_no}"
+                    )
 
     output = io.BytesIO()
     doc.save(output)
@@ -2004,19 +2233,42 @@ def generate_ticket():
         return jsonify({"error": "CMST assignment failed"}), 500
 
     try:
-        if effective_quantity == 1:
-            ticket_no = generate_ticket_no()
+                if effective_quantity == 1:
+                ticket_no = generate_ticket_no()
 
-            pdf = generate_ticket_with_placeholders(
-                full_name,
-                ticket_no,
-                EVENT_DATE,
-                str(ticket_price),
-                event_place,
-                EVENT_TIME,
-                product_title,
-                cmst_no,
-            )
+                # 🔐 Generate a unique cryptographically secure
+                # verification token for this ticket.
+                verification_token = generate_ticket_verification_token()
+
+                # 🌐 Public website URL encoded into the QR code.
+                verification_url = build_ticket_verification_url(
+                    verification_token
+                )
+
+                # 💾 Create the authoritative backend verification record
+                # BEFORE generating the physical ticket PDF.
+                create_ticket_verification_record(
+                    token=verification_token,
+                    ticket_no=ticket_no,
+                    full_name=full_name,
+                    email=email,
+                    product_title=product_title,
+                    ticket_price=ticket_price,
+                    cmst_no=cmst_no,
+                    order_id=order_id,
+                )
+
+                pdf = generate_ticket_with_placeholders(
+                    full_name,
+                    ticket_no,
+                    EVENT_DATE,
+                    str(ticket_price),
+                    event_place,
+                    EVENT_TIME,
+                    product_title,
+                    cmst_no,
+                    verification_url,
+                )
 
             order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
             os.makedirs(order_dir, exist_ok=True)
@@ -2076,9 +2328,31 @@ def generate_ticket():
         with zipfile.ZipFile(
             zip_stream, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
         ) as zf:
-            for _ in range(effective_quantity):
+                        for _ in range(effective_quantity):
                 ticket_no = generate_ticket_no()
                 ticket_numbers.append(ticket_no)
+
+                # 🔐 Generate a unique cryptographically secure
+                # verification token for this individual ticket.
+                verification_token = generate_ticket_verification_token()
+
+                # 🌐 Public website URL encoded into this ticket's QR.
+                verification_url = build_ticket_verification_url(
+                    verification_token
+                )
+
+                # 💾 Create this ticket's authoritative verification record.
+                create_ticket_verification_record(
+                    token=verification_token,
+                    ticket_no=ticket_no,
+                    full_name=full_name,
+                    email=email,
+                    product_title=product_title,
+                    ticket_price=ticket_price,
+                    cmst_no=cmst_no,
+                    order_id=order_id,
+                )
+
                 pdf = generate_ticket_with_placeholders(
                     full_name,
                     ticket_no,
@@ -2088,6 +2362,7 @@ def generate_ticket():
                     EVENT_TIME,
                     product_title,
                     cmst_no,
+                    verification_url,
                 )
 
                 name = f"RaffleTicket_{ticket_no}.pdf"
@@ -2397,6 +2672,47 @@ def get_sku():
         return jsonify({"error": "Missing product_title"}), 400
     sku = generate_sku(product_title)
     return jsonify({"sku": sku}), 200
+
+
+# --------------------------------------------------
+# PUBLIC TICKET VERIFICATION
+# --------------------------------------------------
+@app.route("/verify_ticket/<token>", methods=["GET"])
+@limiter.limit("20 per minute")
+def verify_ticket(token):
+    """
+    Public endpoint used by the /verify-ticket/<token> frontend page.
+    Returns the authoritative verification record for the given token.
+
+    The token is a URL-safe random string (see generate_ticket_verification_token).
+    It contains no personally-identifying information.
+    """
+    # Basic token format validation (A-Z, a-z, 0-9, -, _)
+    if not token or not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", token):
+        return jsonify({
+            "status": "INVALID",
+            "message": "This verification link is not valid."
+        }), 400
+
+    record = load_ticket_verification_record(token)
+
+    if not record:
+        return jsonify({
+            "status": "NOT_FOUND",
+            "message": "We could not find a ticket for this verification link."
+        }), 404
+
+    # Return only what the verification page needs (no full email for privacy).
+    return jsonify({
+        "status": "VALID",
+        "ticket_no": record.get("ticket_no"),
+        "full_name": record.get("full_name"),
+        "product": record.get("product"),
+        "cmst_no": record.get("cmst_no"),
+        "created_at": record.get("created_at"),
+        "raffle_id": record.get("raffle_id"),
+        "ticket_status": record.get("status", "ACTIVE"),
+    }), 200
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
