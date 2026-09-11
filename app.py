@@ -1614,7 +1614,7 @@ def generate_ticket_with_placeholders(
                     )
 
                     fontname = "helv"
-                    fontsize = 7
+                    fontsize = 7.5
 
                     # Keep the original left position and vertical position.
                     flex_rect = fitz.Rect(
