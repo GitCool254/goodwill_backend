@@ -1671,77 +1671,52 @@ def generate_ticket_with_placeholders(
                 color=(0, 0, 0),
             )
 
-                # ------------------- QR CODE -------------------
-                # The QR code contains ONLY the public verification URL.
-                #
-                # It does NOT contain:
-                # - customer name
-                # - email
-                # - product information
-                # - ticket number
-                # - CMST number
-                # - ticket status
-                #
-                # The backend remains the authoritative source of truth.
+    # ----------------------------------------------------------------
+    # QR CODE
+    # ----------------------------------------------------------------
+    # Drawn ONCE per ticket, AFTER all placeholder replacements.
+    # The QR code contains ONLY the public verification URL.
+    # It does NOT contain any customer name, email, product, ticket
+    # number, CMST number, or ticket status. The backend remains the
+    # authoritative source of truth.
+    # ----------------------------------------------------------------
+    qr_data = verification_url
 
-                qr_data = verification_url
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=6,
+        border=2,
+    )
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    img_bytes = io.BytesIO()
+    img.save(img_bytes, format="PNG")
+    img_bytes.seek(0)
 
-                qr = qrcode.QRCode(
-                    version=None,
-                    error_correction=qrcode.constants.ERROR_CORRECT_M,
-                    box_size=6,
-                    border=2,
-                )
-
-                qr.add_data(qr_data)
-                qr.make(fit=True)
-
-                img = qr.make_image(
-                    fill_color="black",
-                    back_color="white"
-                )
-
-                img_bytes = io.BytesIO()
-                img.save(
-                    img_bytes,
-                    format="PNG"
-                )
-                img_bytes.seek(0)
-
-                qr_placeholder = "{{QR_CODE}}"
-                rects = page.search_for(qr_placeholder)
-
-                if rects:
-                    rect = rects[0]
-
-                    # Clear original QR placeholder text.
-                    page.draw_rect(
-                        rect,
-                        color=(1, 1, 1),
-                        fill=(1, 1, 1)
-                    )
-
-                    # Standard square QR area.
-                    qr_size = 100
-
-                    qr_rect = fitz.Rect(
-                        rect.x0,
-                        rect.y0,
-                        rect.x0 + qr_size,
-                        rect.y0 + qr_size
-                    )
-
-                    page.insert_image(
-                        qr_rect,
-                        stream=img_bytes,
-                        keep_proportion=True
-                    )
-
-                else:
-                    print(
-                        f"⚠️ QR placeholder '{{QR_CODE}}' "
-                        f"not found in template for ticket {ticket_no}"
-                    )
+    qr_placeholder = "{{QR_CODE}}"
+    qr_rects = page.search_for(qr_placeholder)
+    if qr_rects:
+        qr_rect_found = qr_rects[0]
+        # Clear the placeholder text.
+        page.draw_rect(qr_rect_found, color=(1, 1, 1), fill=(1, 1, 1))
+        # Standard square QR area.
+        qr_size = 100
+        qr_rect = fitz.Rect(
+            qr_rect_found.x0,
+            qr_rect_found.y0,
+            qr_rect_found.x0 + qr_size,
+            qr_rect_found.y0 + qr_size,
+        )
+        page.insert_image(
+            qr_rect, stream=img_bytes, keep_proportion=True
+        )
+    else:
+        print(
+            f"⚠️ QR placeholder '{{QR_CODE}}' "
+            f"not found in template for ticket {ticket_no}"
+        )
 
     output = io.BytesIO()
     doc.save(output)
@@ -2233,42 +2208,51 @@ def generate_ticket():
         return jsonify({"error": "CMST assignment failed"}), 500
 
     try:
-                if effective_quantity == 1:
-                ticket_no = generate_ticket_no()
+        if effective_quantity == 1:
+            ticket_no = generate_ticket_no()
 
-                # 🔐 Generate a unique cryptographically secure
-                # verification token for this ticket.
-                verification_token = generate_ticket_verification_token()
+            # 🔐 Generate a unique cryptographically secure
+            # verification token for this ticket.
+            verification_token = generate_ticket_verification_token()
+            # 🌐 Public website URL encoded into the QR code.
+            verification_url = build_ticket_verification_url(
+                verification_token
+            )
 
-                # 🌐 Public website URL encoded into the QR code.
-                verification_url = build_ticket_verification_url(
-                    verification_token
-                )
+            # 💾 Create the authoritative backend verification
+            # BEFORE generating the physical ticket PDF.
+            create_ticket_verification_record(
+                token=verification_token,
+                ticket_no=ticket_no,
+                full_name=full_name,
+                email=email,
+                product_title=product_title,
+                ticket_price=ticket_price,
+                cmst_no=cmst_no,
+                order_id=order_id,
+            )
 
-                # 💾 Create the authoritative backend verification record
-                # BEFORE generating the physical ticket PDF.
-                create_ticket_verification_record(
-                    token=verification_token,
-                    ticket_no=ticket_no,
-                    full_name=full_name,
-                    email=email,
-                    product_title=product_title,
-                    ticket_price=ticket_price,
-                    cmst_no=cmst_no,
-                    order_id=order_id,
-                )
+            pdf = generate_ticket_with_placeholders(
+                full_name,
+                ticket_no,
+                EVENT_DATE,
+                str(ticket_price),
+                event_place,
+                EVENT_TIME,
+                product_title,
+                cmst_no,
+                verification_url,
+            )
 
-                pdf = generate_ticket_with_placeholders(
-                    full_name,
-                    ticket_no,
-                    EVENT_DATE,
-                    str(ticket_price),
-                    event_place,
-                    EVENT_TIME,
-                    product_title,
-                    cmst_no,
-                    verification_url,
-                )
+            order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+            os.makedirs(order_dir, exist_ok=True)
+
+            file_name = f"RaffleTicket_{ticket_no}.pdf"
+
+            order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
+            os.makedirs(order_dir, exist_ok=True)
+
+            file_name = f"RaffleTicket_{ticket_no}.pdf"
 
             order_dir = os.path.join(TICKET_STORAGE_DIR, order_id)
             os.makedirs(order_dir, exist_ok=True)
@@ -2328,7 +2312,7 @@ def generate_ticket():
         with zipfile.ZipFile(
             zip_stream, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
         ) as zf:
-                        for _ in range(effective_quantity):
+            for _ in range(effective_quantity):
                 ticket_no = generate_ticket_no()
                 ticket_numbers.append(ticket_no)
 
