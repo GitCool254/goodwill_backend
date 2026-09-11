@@ -150,7 +150,7 @@ CORS(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "Goodwillstores_Ticket_Template6.pdf")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "Goodwillstores_Ticket_Template7.pdf")
 # Service account key (already in your Termux setup)
 GSHEET_KEY_FILE = os.path.join(BASE_DIR, "goodwill-backend.json")
 GSHEET_ID = os.environ.get("GSHEET_ID")
@@ -1280,8 +1280,18 @@ def generate_ticket_with_placeholders(
     page = doc[0]
     page.wrap_contents()
 
+    # Per-placeholder font sizes (falls back to DEFAULT_FONT_SIZE)
+    PLACEHOLDER_FONT_SIZES = {
+        "{{NAME_SMALL}}": 8,     # Small name placeholder
+        "{{NAME}}": 10,          # Legacy fallback
+    }
+    DEFAULT_FONT_SIZE = 10
+
+    first_name = full_name.split()[0] if full_name.split() else full_name
+
     replacements = {
-        "{{NAME}}": full_name,
+        "{{NAME_SMALL}}": first_name,   # Small name
+        "{{NAME}}": full_name,         # Legacy fallback
         "{{TICKET-NO}}": ticket_no,
         "{{TICKET_PRICE}}": ticket_price,
         "{{EVENT_PLACE}}": event_place,
@@ -1292,6 +1302,9 @@ def generate_ticket_with_placeholders(
     combined_placeholder = "{{DATE}} {{TIME}}"
     combined_value = f"{event_date} {event_time}".strip()
     for placeholder, value in replacements.items():
+
+        # Determine font size for THIS placeholder BEFORE
+        fontsize = PLACEHOLDER_FONT_SIZES.get(placeholder, DEFAULT_FONT_SIZE)
 
         if placeholder in ("{{DATE}}", "{{TIME}}"):
             matches = page.search_for(combined_placeholder)
@@ -1309,7 +1322,6 @@ def generate_ticket_with_placeholders(
         for rect in matches:
             text_str = str(value)
             fontname = "helv"
-            fontsize = 10
 
             # --- Measure text width ---
             text_width = fitz.get_text_length(
