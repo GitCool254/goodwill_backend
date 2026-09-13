@@ -2093,7 +2093,7 @@ def generate_ticket():
         "Mesa Lite e-bikes": Decimal("7.00"),
         "Sightmark wraith scope.": Decimal("5.00"),
         "Kitchen Island": Decimal("5.00"),
-        "Broyhill Patio Set - Like New.": Decimal("5.00"),
+        "Broyhill Patio Set": Decimal("5.00"),
         "Light Grey Set": Decimal("6.00"),
         "Power Recliner Set": Decimal("6.00"),
         "Modern Sofa": Decimal("4.00"),
