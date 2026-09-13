@@ -2699,11 +2699,20 @@ def bootstrap():
             "winners": load_recent_winners()
         }
 
-    return jsonify({
+    response = jsonify({
         "ticket_state": ticket_payload,
         "winners_toggle": winners_toggle_payload,
         "recent_winners": recent_winners_payload,
-    }), 200
+    })
+
+    # Let Vercel's edge cache the bootstrap response for 10 s,
+    # then serve stale for up to 60 s while revalidating in the
+    # background. Most page loads will hit Vercel's edge, NOT Render.
+    response.headers["Cache-Control"] = (
+        "public, s-maxage=10, stale-while-revalidate=60"
+    )
+
+    return response, 200
 
 # --------------------------------------------------
 # SKU GENERATION (Deterministic per product)
