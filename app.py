@@ -139,6 +139,14 @@ CORS(
                 "https://goodwillstores.vercel.app",
             ]
         },
+        r"/bootstrap": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
         r"/get_sku": {
             "origins": [
                 "https://goodwillrafflestore.onrender.com",
@@ -2630,6 +2638,72 @@ def winners_detail_toggle():
     """
     show = os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true"
     return jsonify({"show": show}), 200
+
+@app.route("/bootstrap", methods=["GET"])
+@limiter.limit("10 per minute")
+def bootstrap():
+    """
+    Combined endpoint that returns:
+      • ticket_state
+      • winners_detail_toggle
+      • recent_winners
+    in a single response. This reduces the number of round-trips the
+    frontend must make during initial page load.
+
+    Reuses the same 10-second cache as /ticket_state so it does not
+    double the ticket_state computation cost.
+    """
+    now = time()
+
+    # --- ticket_state (same logic + cache as /ticket_state) ---
+    if (
+        _ticket_state_cache["data"]
+        and now - _ticket_state_cache["timestamp"] < CACHE_EXPIRY
+    ):
+        cached_resp, _ = _ticket_state_cache["data"]
+        ticket_payload = cached_resp.get_json()
+        ticket_payload["cache"] = "HIT"
+    else:
+        state = apply_daily_decay_if_needed()
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+
+        remaining = state.get("remaining")
+        tickets_sold_ui = None
+        if isinstance(remaining, int):
+            tickets_sold_ui = max(INITIAL_TICKETS - remaining, 0)
+
+        ticket_payload = {
+            "remaining": remaining,
+            "tickets_sold": tickets_sold_ui,
+            "last_calc_date": state.get("last_calc_date"),
+            "initialized": state.get("initialized", False),
+            "today": today,
+            "cache": "MISS",
+        }
+
+        # Refresh the shared cache so /ticket_state benefits too.
+        _ticket_state_cache["data"] = (jsonify(ticket_payload), 200)
+        _ticket_state_cache["timestamp"] = now
+
+    # --- winners_detail_toggle ---
+    winners_toggle_payload = {
+        "show": os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true"
+    }
+
+    # --- recent_winners ---
+    if not SHOW_RECENT_WINNERS:
+        recent_winners_payload = {"show": False, "winners": []}
+    else:
+        recent_winners_payload = {
+            "show": True,
+            "winners": load_recent_winners()
+        }
+
+    return jsonify({
+        "ticket_state": ticket_payload,
+        "winners_toggle": winners_toggle_payload,
+        "recent_winners": recent_winners_payload,
+    }), 200
 
 # --------------------------------------------------
 # SKU GENERATION (Deterministic per product)
