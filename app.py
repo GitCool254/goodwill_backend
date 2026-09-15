@@ -2554,7 +2554,7 @@ def load_recent_winners():
                 "cash_out": False,
                 "date_claimed":"30 July 2026",
                 "ticket_no": "GWS-8B43622A"
-            }
+            },
             {
                 "name": "Joshua T.",
                 "state": "Applecross WA",
