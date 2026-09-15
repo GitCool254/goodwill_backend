@@ -155,6 +155,14 @@ CORS(
                 "https://goodwillstores.vercel.app",
             ]
         },
+        r"/check_ticket_status": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
         r"/verify_ticket/*": {
             "origins": [
                 "https://goodwillrafflestore.onrender.com",
@@ -2512,37 +2520,50 @@ def load_recent_winners():
         # Return a default list (or empty) if file doesn't exist
         return [
             {
-                "name": "Jane M.",
-                "state": "Texas",
-                "country": "USA",
-                "prize": "Wonderfold Wagon",
+                "name": "Melissa D.",
+                "state": "Dodges Ferry TAS",
+                "country": "Australia",
+                "prize": "Larchmont Dining Set",
                 "cash_out": False,
-                "ticket_no": "RF-48219"
+                "date_claimed":"30 July 2026",
+                "ticket_no": "GWS-240715B9"
             },
             {
-                "name": "Samuel K.",
-                "state": "New York",
-                "country": "USA",
-                "prize": "Beachcroft Patio Set",
+                "name": "Liam J..",
+                "state": "Albans VIC",
+                "country": "Australia",
+                "prize": "Ballinasloe 3-piece Sectional",
                 "cash_out": False,
-                "ticket_no": "RF-37922"
+                "date_claimed":"30 July 2026",
+                "ticket_no": "GWS-3B8381EI"
             },
             {
-                "name": "Brian O.",
-                "state": "Ontario",
-                "country": "Canada",
+                "name": "Alexander G.",
+                "state": "Dodges Ferry TAS",
+                "country": "Australia",
                 "prize": "800",
                 "cash_out": True,
-                "ticket_no": "RF-29410"
+                "date_claimed":"1 August 2026",
+                "ticket_no": "GWS-74BD35F1"
             },
             {
-                "name": "Joshua K.",
-                "state": "Mebourne",
+                "name": "Mae W.",
+                "state": "Elanora QLD",
                 "country": "Australia",
-                "prize": "Coolster 125 cc",
+                "prize": "Trek Marlin 5 Gen 2",
                 "cash_out": False,
-                "ticket_no": "RF-37922"
+                "date_claimed":"30 July 2026",
+                "ticket_no": "GWS-8B43622A"
             }
+            {
+                "name": "Joshua T.",
+                "state": "Applecross WA",
+                "country": "Australia",
+                "prize": "Venom X21(Dongfang DF50SRT)",
+                "cash_out": False,
+                "date_claimed":"31 July 2026",
+                "ticket_no": "GWS-C2C2621C."
+            },
         ]
     try:
         with open(RECENT_WINNERS_FILE, "r") as f:
@@ -2571,6 +2592,50 @@ def recent_winners():
     winners = load_recent_winners()
     # Optionally filter only winners with a specific date, etc.
     return jsonify({"show": True, "winners": winners}), 200
+
+@app.route("/check_ticket_status", methods=["POST"])
+@limiter.limit("10 per minute")
+def check_ticket_status():
+    """
+    Authoritative ticket status check.
+
+    The backend is the single source of truth. It looks up the submitted
+    ticket number against the RecentWinners list.
+
+    Outcomes:
+      • CLAIMED       → ticket found in RecentWinners
+                        (already won in a previous draw → already claimed)
+      • NOT_SELECTED  → ticket not found in RecentWinners
+    """
+    data = request.get_json(force=True)
+    ticket_no = (data.get("ticket_no") or "").strip().upper()
+
+    if not ticket_no:
+        return jsonify({"error": "Missing ticket_no"}), 400
+
+    # Ticket format: GWS-XXXXXXXX (8 alphanumeric, case-insensitive)
+    if not re.fullmatch(r"GWS-[A-Z0-9]{8}", ticket_no):
+        return jsonify({"error": "Invalid ticket number format"}), 400
+
+    winners = load_recent_winners()
+
+    for w in winners:
+        w_ticket = (w.get("ticket_no") or "").strip().upper()
+        if w_ticket == ticket_no:
+            return jsonify({
+                "status": "CLAIMED",
+                "winner": {
+                    "ticket_no":     w.get("ticket_no"),
+                    "name":          w.get("name"),
+                    "prize":         w.get("prize"),
+                    "cash_out":      w.get("cash_out", False),
+                    "date_claimed":  w.get("date_claimed") or w.get("date") or None,
+                    "country":       w.get("country"),
+                    "state":         w.get("state"),
+                }
+            }), 200
+
+    return jsonify({"status": "NOT_SELECTED"}), 200
 
 @app.route("/referral/generate", methods=["POST"])
 @limiter.limit("10 per minute")
