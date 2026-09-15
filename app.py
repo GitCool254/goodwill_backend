@@ -2562,7 +2562,7 @@ def load_recent_winners():
                 "prize": "Venom X21(Dongfang DF50SRT)",
                 "cash_out": False,
                 "date_claimed":"31 July 2026",
-                "ticket_no": "GWS-C2C2621C."
+                "ticket_no": "GWS-C2C2621C"
             },
         ]
     try:
