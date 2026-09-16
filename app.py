@@ -2535,7 +2535,7 @@ def load_recent_winners():
                 "prize": "Ballinasloe 3-piece Sectional",
                 "cash_out": False,
                 "date_claimed":"30 July 2026",
-                "ticket_no": "GWS-3B8381EI"
+                "ticket_no": "GWS-37377A9E"
             },
             {
                 "name": "Alexander G.",
