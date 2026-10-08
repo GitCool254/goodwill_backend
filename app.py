@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 from flask_cors import CORS
 from decimal import Decimal, ROUND_HALF_UP
 import fitz  # PyMuPDF
@@ -169,6 +169,31 @@ CORS(
                 "https://goodwillstores.onrender.com",
                 "https://goodwillrafflestores.vercel.app",
                 "https://goodwillstores.vercel.app",
+            ]
+        },
+        r"/products": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
+        r"/products/*": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
+        r"/admin/*": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+                "http://localhost:5173",
             ]
         },
     },
@@ -870,6 +895,63 @@ REFERRALS_KEY = "state/referrals.json"
 CMST_FILE = os.path.join(BASE_DIR, "cmst_records.json")
 CMST_KEY = "state/cmst_records.json"
 CMST_LOCK_FILE = os.path.join(BASE_DIR, "cmst.lock")
+
+# --------------------------------------------------
+# ADMIN PORTAL — configuration
+# --------------------------------------------------
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+ADMIN_TOKEN    = os.environ.get("ADMIN_TOKEN", "")
+
+PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
+PRODUCTS_KEY  = "state/products.json"
+PRODUCT_IMAGES_DIR = os.path.join(BASE_DIR, "storage", "product_images")
+PRODUCT_IMAGES_R2_PREFIX = "products/"
+
+os.makedirs(PRODUCT_IMAGES_DIR, exist_ok=True)
+
+
+def load_products():
+    """Load product data (R2 primary, local fallback)."""
+    if r2_client:
+        try:
+            obj = r2_client.get_object(Bucket=R2_BUCKET_NAME, Key=PRODUCTS_KEY)
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+    if os.path.exists(PRODUCTS_FILE):
+        try:
+            with open(PRODUCTS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"sampleProducts": [], "catalogItems": []}
+
+
+def save_products(data):
+    """Save product data (R2 primary, local fallback)."""
+    payload = json.dumps(data, indent=2).encode()
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=PRODUCTS_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 products save failed, fallback local:", e)
+    with open(PRODUCTS_FILE, "w") as f:
+        f.write(payload.decode())
+
+
+def require_admin(req):
+    """Returns True if the request carries a valid admin token."""
+    if not ADMIN_TOKEN:
+        return False
+    token = req.headers.get("X-Admin-Token")
+    return bool(token) and token == ADMIN_TOKEN
 
 # Two-layer lock:
 #  • cmst_thread_lock  → protects against concurrent threads inside one worker process
@@ -2911,6 +2993,144 @@ def verify_ticket(token):
         "expired_at": record.get("expired_at"),
     }), 200
 
+# --------------------------------------------------
+# PUBLIC PRODUCTS ENDPOINT (used by the frontend on boot)
+# --------------------------------------------------
+@app.route("/products", methods=["GET"])
+@limiter.limit("60 per minute")
+def public_products():
+    """
+    Public read-only endpoint. Returns both product lists.
+    The frontend fetches this once on boot and falls back to
+    the hardcoded products.js data if the request fails.
+    """
+    data = load_products()
+    # If backend has nothing stored yet, return empty lists so the
+    # frontend falls back to its hardcoded defaults.
+    return jsonify(data), 200
+
+
+@app.route("/products/<filename>", methods=["GET"])
+def serve_product_image(filename):
+    """Serve an admin-uploaded product image (local first, R2 fallback)."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+        return jsonify({"error": "Invalid filename"}), 400
+
+    local_path = os.path.join(PRODUCT_IMAGES_DIR, filename)
+    if os.path.exists(local_path):
+        return send_file(local_path)
+
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=f"{PRODUCT_IMAGES_R2_PREFIX}{filename}",
+            )
+            return Response(
+                obj["Body"].read(),
+                mimetype="image/jpeg",
+                headers={"Cache-Control": "public, max-age=31536000"},
+            )
+        except Exception:
+            pass
+
+    return jsonify({"error": "Not found"}), 404
+
+
+# --------------------------------------------------
+# ADMIN ENDPOINTS
+# --------------------------------------------------
+@app.route("/admin/login", methods=["POST"])
+@limiter.limit("5 per minute")
+def admin_login():
+    """Exchange credentials for a bearer token."""
+    if not ADMIN_PASSWORD or not ADMIN_TOKEN:
+        return jsonify({"error": "Admin portal not configured"}), 503
+
+    data = request.get_json(force=True) or {}
+    u = (data.get("username") or "").strip()
+    p = (data.get("password") or "").strip()
+
+    if u == ADMIN_USERNAME and p == ADMIN_PASSWORD:
+        return jsonify({"token": ADMIN_TOKEN}), 200
+
+    return jsonify({"error": "Invalid credentials"}), 401
+
+
+@app.route("/admin/products", methods=["GET"])
+@limiter.limit("60 per minute")
+def admin_get_products():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(load_products()), 200
+
+
+@app.route("/admin/products", methods=["POST"])
+@limiter.limit("30 per minute")
+def admin_save_products():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(force=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid payload"}), 400
+    if "sampleProducts" not in data or "catalogItems" not in data:
+        return jsonify({"error": "Missing sampleProducts or catalogItems"}), 400
+    if not isinstance(data["sampleProducts"], list) or not isinstance(data["catalogItems"], list):
+        return jsonify({"error": "Both lists must be arrays"}), 400
+
+    save_products(data)
+    print(
+        f"✅ Admin saved products "
+        f"(featured={len(data['sampleProducts'])}, "
+        f"catalog={len(data['catalogItems'])})"
+    )
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/admin/upload_image", methods=["POST"])
+@limiter.limit("30 per minute")
+def admin_upload_image():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if "file" not in request.files:
+        return jsonify({"error": "Missing file"}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", f.filename)
+    filename = f"{uuid.uuid4().hex[:12]}_{safe_name}"
+    file_bytes = f.read()
+
+    # R2 primary
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=f"{PRODUCT_IMAGES_R2_PREFIX}{filename}",
+                Body=file_bytes,
+                ContentType=f.content_type or "application/octet-stream",
+            )
+        except Exception as e:
+            print("R2 image upload failed:", e)
+
+    # Local fallback (always save locally too)
+    with open(os.path.join(PRODUCT_IMAGES_DIR, filename), "wb") as fp:
+        fp.write(file_bytes)
+
+    print(f"✅ Admin uploaded image: {filename}")
+    return jsonify({
+        "status": "ok",
+        "url": f"/products/{filename}",
+        "filename": filename,
+    }), 200
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
