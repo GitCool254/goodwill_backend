@@ -196,6 +196,23 @@ CORS(
                 "http://localhost:5173",
             ]
         },
+        r"/donations": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
+        r"/admin/donations": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+                "http://localhost:5173",
+            ]
+        },
     },
 )
 
@@ -907,6 +924,47 @@ PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
 PRODUCTS_KEY  = "state/products.json"
 PRODUCT_IMAGES_DIR = os.path.join(BASE_DIR, "storage", "product_images")
 PRODUCT_IMAGES_R2_PREFIX = "products/"
+
+# --------------------------------------------------
+# DONATIONS — storage
+# --------------------------------------------------
+DONATIONS_FILE = os.path.join(BASE_DIR, "donations.json")
+DONATIONS_KEY  = "state/donations.json"
+
+
+def load_donations():
+    """Load donations data (R2 primary, local fallback)."""
+    if r2_client:
+        try:
+            obj = r2_client.get_object(Bucket=R2_BUCKET_NAME, Key=DONATIONS_KEY)
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+    if os.path.exists(DONATIONS_FILE):
+        try:
+            with open(DONATIONS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"programs": []}
+
+
+def save_donations(data):
+    """Save donations data (R2 primary, local fallback)."""
+    payload = json.dumps(data, indent=2).encode()
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=DONATIONS_KEY,
+                Body=payload,
+                ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 donations save failed, fallback local:", e)
+    with open(DONATIONS_FILE, "w") as f:
+        f.write(payload.decode())
 
 os.makedirs(PRODUCT_IMAGES_DIR, exist_ok=True)
 
@@ -3131,6 +3189,43 @@ def admin_upload_image():
         "url": f"/products/{filename}",
         "filename": filename,
     }), 200
+
+# --------------------------------------------------
+# PUBLIC DONATIONS ENDPOINT
+# --------------------------------------------------
+@app.route("/donations", methods=["GET"])
+@limiter.limit("60 per minute")
+def public_donations():
+    """Public read-only endpoint for the Donations page."""
+    return jsonify(load_donations()), 200
+
+
+# --------------------------------------------------
+# ADMIN DONATIONS ENDPOINTS
+# --------------------------------------------------
+@app.route("/admin/donations", methods=["GET"])
+@limiter.limit("60 per minute")
+def admin_get_donations():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(load_donations()), 200
+
+
+@app.route("/admin/donations", methods=["POST"])
+@limiter.limit("30 per minute")
+def admin_save_donations():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(force=True)
+    if not isinstance(data, dict) or "programs" not in data:
+        return jsonify({"error": "Missing programs array"}), 400
+    if not isinstance(data["programs"], list):
+        return jsonify({"error": "programs must be an array"}), 400
+
+    save_donations(data)
+    print(f"✅ Admin saved donations ({len(data['programs'])} programs)")
+    return jsonify({"status": "ok"}), 200
 
 # --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
