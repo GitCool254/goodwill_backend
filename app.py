@@ -1138,10 +1138,39 @@ def save_otps(data):
     _save_json_store(OTPS_KEY, OTPS_FILE, data)
 
 
+def _normalize_phone(raw):
+    """Normalize a phone number to E.164.
+    Accepts:
+      - "+NNN..." with 8-15 digits (any country) -> returned as-is
+      - "254XXXXXXXXX" (12 digits, Kenya) -> "+254XXXXXXXXX"
+      - "0XXXXXXXXX" (10 digits, Kenya) -> "+254XXXXXXXXX"
+    Rejects anything else (returns "").
+    Strips spaces, dashes, parens, dots before checking."""
+    if not raw:
+        return ""
+    p = re.sub(r"[\s\-().]", "", str(raw).strip())
+    if not p:
+        return ""
+    if p.startswith("+"):
+        return p if re.match(r"^\+\d{8,15}$", p) else ""
+    digits = re.sub(r"\D", "", p)
+    if not digits:
+        return ""
+    if digits.startswith("254") and len(digits) == 12:
+        return "+" + digits
+    if digits.startswith("0") and len(digits) == 10:
+        return "+254" + digits[1:]
+    return ""
+
+
 def _send_otp_sms(phone, code):
     """Send OTP via SMS Gateway for Android (sms-gate.app) 3rdparty API.
     Uses HTTP Basic Auth; POSTs to {base}/messages. Fails closed if not
     configured. Returns True only on HTTP 2xx."""
+    phone = _normalize_phone(phone)
+    if not phone:
+        print("SMSGate: refusing to send - invalid/empty phone after normalization")
+        return False
     if not (SMSGATE_USERNAME and SMSGATE_PASSWORD and SMSGATE_DEVICE_ID):
         print("SMSGate not configured (SMSGATE_USERNAME/PASSWORD/DEVICE_ID missing)")
         return False
@@ -3967,6 +3996,9 @@ def team_create_user():
 
     if not username or not phone or not password:
         return jsonify({"error": "username, phone, password required"}), 400
+    phone = _normalize_phone(phone)
+    if not phone:
+        return jsonify({"error": "phone must be E.164 (+254...), 254..., or 0... format"}), 400
     if len(password) < 8:
         return jsonify({"error": "Password must be at least 8 characters"}), 400
     if role not in ("superior", "employee"):
@@ -4101,8 +4133,9 @@ def team_set_phone(user_id):
     phone = (data.get("phone") or "").strip()
     if not phone:
         return jsonify({"error": "phone required"}), 400
-    if not re.match(r"^\+\d{8,15}$", phone):
-        return jsonify({"error": "phone must be E.164 format (e.g. +254712345678)"}), 400
+    phone = _normalize_phone(phone)
+    if not phone:
+        return jsonify({"error": "phone must be E.164 (+254...), 254..., or 0... format"}), 400
     users = load_users()
     found = None
     for u in users["users"]:
