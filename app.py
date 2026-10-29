@@ -10,6 +10,7 @@ import hashlib
 import requests
 import json
 from datetime import datetime, timedelta
+from werkzeug.security import generate_password_hash, check_password_hash
 import boto3
 from botocore.client import Config
 import math
@@ -41,6 +42,24 @@ CORS(
     app,
     resources={
 
+        r"/auth/*": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+                "http://localhost:5173",
+            ]
+        },
+        r"/team/*": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+                "http://localhost:5173",
+            ]
+        },
         r"/generate_ticket": {
             "origins": [
                 "https://goodwillrafflestore.onrender.com",
@@ -1010,6 +1029,189 @@ def require_admin(req):
         return False
     token = req.headers.get("X-Admin-Token")
     return bool(token) and token == ADMIN_TOKEN
+
+
+# ==========================================================
+# TEAM / AUTH INFRASTRUCTURE (additive — does not touch
+# env-var ADMIN_USERNAME/PASSWORD/TOKEN break-glass path)
+# ==========================================================
+USERS_FILE    = os.path.join(BASE_DIR, "users.json")
+USERS_KEY     = "state/users.json"
+SESSIONS_FILE = os.path.join(BASE_DIR, "sessions.json")
+SESSIONS_KEY  = "state/sessions.json"
+OTPS_FILE     = os.path.join(BASE_DIR, "otps.json")
+OTPS_KEY      = "state/otps.json"
+
+SMSGATE_URL       = os.environ.get("SMSGATE_URL", "https://api.smsgate.me/v3/send")
+SMSGATE_USERNAME  = os.environ.get("SMSGATE_USERNAME", "")
+SMSGATE_PASSWORD  = os.environ.get("SMSGATE_PASSWORD", "")
+SMSGATE_DEVICE_ID = os.environ.get("SMSGATE_DEVICE_ID", "")
+
+SESSION_TTL_HOURS = 8
+OTP_TTL_MINUTES   = 10
+OTP_MAX_ATTEMPTS  = 5
+
+
+def _load_json_store(key, filepath, default):
+    if r2_client:
+        try:
+            obj = r2_client.get_object(Bucket=R2_BUCKET_NAME, Key=key)
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return default
+
+
+def _save_json_store(key, filepath, data):
+    payload = json.dumps(data, indent=2).encode()
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME, Key=key,
+                Body=payload, ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 store save failed, fallback local:", e)
+    with open(filepath, "w") as f:
+        f.write(payload.decode())
+
+
+def load_users():
+    return _load_json_store(USERS_KEY, USERS_FILE, {"users": []})
+
+
+def save_users(data):
+    _save_json_store(USERS_KEY, USERS_FILE, data)
+
+
+def load_sessions():
+    return _load_json_store(SESSIONS_KEY, SESSIONS_FILE, {"sessions": {}})
+
+
+def save_sessions(data):
+    _save_json_store(SESSIONS_KEY, SESSIONS_FILE, data)
+
+
+def load_otps():
+    return _load_json_store(OTPS_KEY, OTPS_FILE, {"otps": {}})
+
+
+def save_otps(data):
+    _save_json_store(OTPS_KEY, OTPS_FILE, data)
+
+
+def _send_otp_sms(phone, code):
+    """Send OTP via SMSGate. Fails closed if not configured."""
+    if not (SMSGATE_USERNAME and SMSGATE_PASSWORD and SMSGATE_DEVICE_ID):
+        print("SMSGate not configured (SMSGATE_USERNAME/PASSWORD/DEVICE_ID missing)")
+        return False
+    try:
+        payload = {
+            "username": SMSGATE_USERNAME,
+            "password": SMSGATE_PASSWORD,
+            "deviceId": SMSGATE_DEVICE_ID,
+            "message":  f"Your Goodwill Stores reset code is {code}. Valid 10 min. Never share.",
+            "phone":    phone,
+        }
+        r = requests.post(SMSGATE_URL, json=payload, timeout=15)
+        ok = r.status_code in (200, 201, 202)
+        print(f"  SMSGate OTP send status={r.status_code} ok={ok}")
+        return ok
+    except Exception as e:
+        print("SMSGate exception:", e)
+        return False
+
+
+def _gen_otp():
+    return f"{secrets.randbelow(1000000):06d}"
+
+
+def _find_user(username):
+    users = load_users().get("users", [])
+    u_lc = (username or "").lower()
+    for u in users:
+        if (u.get("username") or "").lower() == u_lc:
+            return u
+    return None
+
+
+def _session_for(token):
+    if not token:
+        return None
+    s = load_sessions().get("sessions", {})
+    rec = s.get(token)
+    if not rec:
+        return None
+    try:
+        exp = datetime.fromisoformat(rec["expires_at"])
+    except Exception:
+        return None
+    if datetime.utcnow() > exp:
+        return None
+    return rec
+
+
+def require_team(req):
+    """Return session dict if valid team token AND user is_active; else None."""
+    rec = _session_for(req.headers.get("X-Team-Token"))
+    if not rec:
+        return None
+    u = _find_user(rec.get("username", ""))
+    if not u or not u.get("is_active", True):
+        return None
+    return {**rec, "user": u}
+
+
+def require_superior(req):
+    """Superior role OR root-admin env token. Returns session dict or None."""
+    if require_admin(req):
+        return {"user": {"username": ADMIN_USERNAME, "role": "superior", "is_root": True}, "_env_admin": True}
+    rec = require_team(req)
+    if not rec:
+        return None
+    if (rec["user"].get("role") or "") != "superior":
+        return None
+    return rec
+
+
+def _ensure_root_admin_bootstrap():
+    """Idempotent: ensure env-var ADMIN_USERNAME exists in users.json as superior.
+    Does NOT override env-var password path. Sets phone from ADMIN_PHONE if present."""
+    if not ADMIN_USERNAME:
+        return
+    users = load_users()
+    existing = None
+    for u in users["users"]:
+        if (u.get("username") or "").lower() == ADMIN_USERNAME.lower():
+            existing = u
+            break
+    admin_phone = (os.environ.get("ADMIN_PHONE") or "").strip()
+    if not existing:
+        users["users"].append({
+            "id": uuid.uuid4().hex[:12],
+            "username": ADMIN_USERNAME,
+            "phone": admin_phone,
+            "role": "superior",
+            "is_active": True,
+            "is_root": True,
+            "password_hash": None,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "created_by": "system_bootstrap",
+            "last_login": None,
+        })
+        save_users(users)
+        print(f"Bootstrapped root admin '{ADMIN_USERNAME}' (phone={'set' if admin_phone else 'MISSING — OTP reset unavailable until ADMIN_PHONE set'})")
+    elif admin_phone and not existing.get("phone"):
+        existing["phone"] = admin_phone
+        save_users(users)
+        print(f"Backfilled ADMIN_PHONE onto root admin '{ADMIN_USERNAME}'")
 
 # Two-layer lock:
 #  • cmst_thread_lock  → protects against concurrent threads inside one worker process
@@ -3112,6 +3314,12 @@ def admin_login():
     if u == ADMIN_USERNAME and p == ADMIN_PASSWORD:
         return jsonify({"token": ADMIN_TOKEN}), 200
 
+    # Override password (set via OTP reset) — fallback for root admin
+    if u == ADMIN_USERNAME:
+        user_rec = _find_user(ADMIN_USERNAME)
+        if user_rec and user_rec.get("password_hash") and check_password_hash(user_rec["password_hash"], p):
+            return jsonify({"token": ADMIN_TOKEN}), 200
+
     return jsonify({"error": "Invalid credentials"}), 401
 
 
@@ -3228,6 +3436,325 @@ def admin_save_donations():
     return jsonify({"status": "ok"}), 200
 
 # --------------------------------------------------
+# AUTH: OTP reset password
+# --------------------------------------------------
+@app.route("/auth/request-reset-otp", methods=["POST"])
+@limiter.limit("3 per minute")
+def auth_request_reset_otp():
+    data = request.get_json(force=True) or {}
+    username = (data.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "username required"}), 400
+
+    u = _find_user(username)
+    phone = (u.get("phone") if u else "") or ""
+    # Uniform response to prevent username enumeration
+    generic_ok = {"status": "ok", "message": "If the account exists, an OTP was sent."}
+
+    if not u or not phone:
+        return jsonify(generic_ok), 200
+
+    # Rate-limit: 1 OTP per 60 s per username
+    otps = load_otps()
+    prev = otps["otps"].get(username.lower())
+    now = datetime.utcnow()
+    if prev:
+        try:
+            sent_at = datetime.fromisoformat(prev.get("sent_at", ""))
+            if (now - sent_at).total_seconds() < 60:
+                return jsonify({"error": "Please wait before requesting another code"}), 429
+        except Exception:
+            pass
+
+    code = _gen_otp()
+    masked = (phone[:3] + "***" + phone[-2:]) if len(phone) >= 5 else "***"
+    otps["otps"][username.lower()] = {
+        "code_hash":   generate_password_hash(code),
+        "expires_at":  (now + timedelta(minutes=OTP_TTL_MINUTES)).isoformat(),
+        "attempts":    0,
+        "sent_at":     now.isoformat(),
+        "phone_masked": masked,
+    }
+    save_otps(otps)
+
+    if not _send_otp_sms(phone, code):
+        return jsonify({"error": "SMS service unavailable. Contact admin."}), 503
+
+    return jsonify({"status": "ok", "phone_masked": masked, "message": "OTP sent."}), 200
+
+
+@app.route("/auth/verify-reset-otp", methods=["POST"])
+@limiter.limit("5 per minute")
+def auth_verify_reset_otp():
+    data = request.get_json(force=True) or {}
+    username = (data.get("username") or "").strip()
+    code     = (data.get("otp") or "").strip()
+    new_pw   = (data.get("new_password") or "").strip()
+
+    if not username or not code or not new_pw:
+        return jsonify({"error": "username, otp, new_password required"}), 400
+    if len(new_pw) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+
+    otps = load_otps()
+    rec = otps["otps"].get(username.lower())
+    if not rec:
+        return jsonify({"error": "No active reset request"}), 400
+
+    try:
+        exp = datetime.fromisoformat(rec["expires_at"])
+    except Exception:
+        exp = datetime.utcnow() - timedelta(seconds=1)
+    if datetime.utcnow() > exp:
+        otps["otps"].pop(username.lower(), None)
+        save_otps(otps)
+        return jsonify({"error": "Code expired"}), 400
+
+    if rec.get("attempts", 0) >= OTP_MAX_ATTEMPTS:
+        otps["otps"].pop(username.lower(), None)
+        save_otps(otps)
+        return jsonify({"error": "Too many attempts. Request a new code."}), 429
+
+    if not check_password_hash(rec["code_hash"], code):
+        rec["attempts"] = rec.get("attempts", 0) + 1
+        save_otps(otps)
+        return jsonify({"error": "Invalid code"}), 401
+
+    # Success: write override hash onto user record
+    u = _find_user(username)
+    if not u:
+        otps["otps"].pop(username.lower(), None)
+        save_otps(otps)
+        return jsonify({"error": "Account not found"}), 404
+
+    users = load_users()
+    for user in users["users"]:
+        if (user.get("username") or "").lower() == username.lower():
+            user["password_hash"] = generate_password_hash(new_pw)
+            user["password_updated_at"] = datetime.utcnow().isoformat() + "Z"
+            break
+    save_users(users)
+
+    otps["otps"].pop(username.lower(), None)
+    save_otps(otps)
+
+    sessions = load_sessions()
+    sessions["sessions"] = {
+        t: s for t, s in sessions["sessions"].items()
+        if (s.get("username") or "").lower() != username.lower()
+    }
+    save_sessions(sessions)
+
+    return jsonify({"status": "ok", "message": "Password updated. You can log in now."}), 200
+
+
+# --------------------------------------------------
+# TEAM: login / logout / user management
+# --------------------------------------------------
+@app.route("/team/login", methods=["POST"])
+@limiter.limit("5 per minute")
+def team_login():
+    data = request.get_json(force=True) or {}
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    u = _find_user(username)
+    if not u:
+        return jsonify({"error": "Invalid credentials"}), 401
+    if not u.get("is_active", True):
+        return jsonify({"error": "Account is deactivated"}), 403
+
+    authed = False
+    if u.get("password_hash") and check_password_hash(u["password_hash"], password):
+        authed = True
+    elif u.get("is_root") and username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        authed = True
+
+    if not authed:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    token = secrets.token_urlsafe(32)
+    sessions = load_sessions()
+    sessions["sessions"][token] = {
+        "username":   u["username"],
+        "role":       u.get("role", "employee"),
+        "created_at": datetime.utcnow().isoformat(),
+        "expires_at": (datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS)).isoformat(),
+    }
+    save_sessions(sessions)
+
+    users = load_users()
+    for user in users["users"]:
+        if (user.get("username") or "").lower() == username.lower():
+            user["last_login"] = datetime.utcnow().isoformat() + "Z"
+            break
+    save_users(users)
+
+    return jsonify({
+        "token": token,
+        "username": u["username"],
+        "role": u.get("role", "employee"),
+        "expires_in_hours": SESSION_TTL_HOURS,
+    }), 200
+
+
+@app.route("/team/logout", methods=["POST"])
+@limiter.limit("60 per minute")
+def team_logout():
+    token = request.headers.get("X-Team-Token")
+    if token:
+        sessions = load_sessions()
+        sessions["sessions"].pop(token, None)
+        save_sessions(sessions)
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/team/users", methods=["GET"])
+@limiter.limit("60 per minute")
+def team_list_users():
+    sess = require_superior(request)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+    users = load_users().get("users", [])
+    safe = [{k: v for k, v in u.items() if k != "password_hash"} for u in users]
+    return jsonify({"users": safe}), 200
+
+
+@app.route("/team/users", methods=["POST"])
+@limiter.limit("20 per minute")
+def team_create_user():
+    sess = require_superior(request)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(force=True) or {}
+    username = (data.get("username") or "").strip()
+    phone    = (data.get("phone") or "").strip()
+    role     = (data.get("role") or "employee").strip().lower()
+    password = (data.get("password") or "").strip()
+
+    if not username or not phone or not password:
+        return jsonify({"error": "username, phone, password required"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+    if role not in ("superior", "employee"):
+        return jsonify({"error": "role must be superior or employee"}), 400
+    if _find_user(username):
+        return jsonify({"error": "Username already exists"}), 409
+
+    users = load_users()
+    new_user = {
+        "id":            uuid.uuid4().hex[:12],
+        "username":      username,
+        "phone":         phone,
+        "role":          role,
+        "is_active":     True,
+        "password_hash": generate_password_hash(password),
+        "created_at":    datetime.utcnow().isoformat() + "Z",
+        "created_by":    sess["user"]["username"],
+        "last_login":    None,
+    }
+    users["users"].append(new_user)
+    save_users(users)
+    return jsonify({"status": "ok", "user": {k: v for k, v in new_user.items() if k != "password_hash"}}), 200
+
+
+def _toggle_user_active(user_id, active):
+    sess = require_superior(request)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+    users = load_users()
+    found = None
+    for u in users["users"]:
+        if u.get("id") == user_id:
+            u["is_active"] = active
+            found = u
+            break
+    if not found:
+        return jsonify({"error": "User not found"}), 404
+    if found.get("is_root") and not active:
+        return jsonify({"error": "Root admin cannot be deactivated"}), 400
+    save_users(users)
+    if not active:
+        sessions = load_sessions()
+        sessions["sessions"] = {
+            t: s for t, s in sessions["sessions"].items()
+            if (s.get("username") or "").lower() != found["username"].lower()
+        }
+        save_sessions(sessions)
+    return jsonify({"status": "ok", "is_active": active}), 200
+
+
+@app.route("/team/users/<user_id>/deactivate", methods=["POST"])
+@limiter.limit("30 per minute")
+def team_deactivate_user(user_id):
+    return _toggle_user_active(user_id, False)
+
+
+@app.route("/team/users/<user_id>/reactivate", methods=["POST"])
+@limiter.limit("30 per minute")
+def team_reactivate_user(user_id):
+    return _toggle_user_active(user_id, True)
+
+
+@app.route("/team/users/<user_id>/delete", methods=["POST"])
+@limiter.limit("20 per minute")
+def team_delete_user(user_id):
+    sess = require_superior(request)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+    users = load_users()
+    target = None
+    for u in users["users"]:
+        if u.get("id") == user_id:
+            target = u
+            break
+    if not target:
+        return jsonify({"error": "User not found"}), 404
+    if target.get("is_root"):
+        return jsonify({"error": "Root admin cannot be deleted"}), 400
+    users["users"] = [u for u in users["users"] if u.get("id") != user_id]
+    save_users(users)
+    sessions = load_sessions()
+    sessions["sessions"] = {
+        t: s for t, s in sessions["sessions"].items()
+        if (s.get("username") or "").lower() != target["username"].lower()
+    }
+    save_sessions(sessions)
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/team/users/<user_id>/set-password", methods=["POST"])
+@limiter.limit("20 per minute")
+def team_set_password(user_id):
+    sess = require_superior(request)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    new_pw = (data.get("new_password") or "").strip()
+    if len(new_pw) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+    users = load_users()
+    found = None
+    for u in users["users"]:
+        if u.get("id") == user_id:
+            u["password_hash"] = generate_password_hash(new_pw)
+            u["password_updated_at"] = datetime.utcnow().isoformat() + "Z"
+            found = u
+            break
+    if not found:
+        return jsonify({"error": "User not found"}), 404
+    save_users(users)
+    sessions = load_sessions()
+    sessions["sessions"] = {
+        t: s for t, s in sessions["sessions"].items()
+        if (s.get("username") or "").lower() != found["username"].lower()
+    }
+    save_sessions(sessions)
+    return jsonify({"status": "ok"}), 200
+
+
+# --------------------------------------------------
 # ONE-TIME STARTUP CLEANUP (SAFE)
 # --------------------------------------------------
 try:
@@ -3237,6 +3764,15 @@ try:
     cleanup_old_r2_objects()
 except Exception as e:
     print("Startup cleanup skipped:", e)
+
+
+# --------------------------------------------------
+# ROOT ADMIN BOOTSTRAP (idempotent — runs every startup)
+# --------------------------------------------------
+try:
+    _ensure_root_admin_bootstrap()
+except Exception as e:
+    print("Root admin bootstrap skipped:", e)
 
 
 if __name__ == "__main__":
