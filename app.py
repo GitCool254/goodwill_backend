@@ -1356,26 +1356,35 @@ def _clear_login_failures(username):
 # ==========================================================
 # AUDIT LOG (append-only, immutable, read-only view)
 # ==========================================================
-def _audit(req, action, target="", detail="", success=True):
-    """Append an audit entry. Never raises — logs to stderr on failure."""
+def _audit(req, action, target="", detail="", success=True, actor=None, role=None):
+    """Append an audit entry. Never raises — logs to stderr on failure.
+    If `actor` is provided, it takes priority over header-based detection
+    (used by auth actions where identity is known but no session token
+    exists yet in the request — e.g. login_success)."""
     try:
         actor_user, actor_role, is_root = "anonymous", "anonymous", False
-        tok = None
-        if req is not None:
-            tok = (req.headers.get("X-Admin-Token")
-                   or req.headers.get("X-Team-Token"))
-        if tok:
-            if ADMIN_TOKEN and tok == ADMIN_TOKEN:
-                actor_user = ADMIN_USERNAME or "admin"
-                actor_role = "superior"
-                is_root = True
-            else:
-                sess = _session_for(tok)
-                if sess:
-                    actor_user = sess.get("username", "unknown")
-                    actor_role = sess.get("role", "employee")
-                    u = _find_user(actor_user) or {}
-                    is_root = bool(u.get("is_root"))
+        if actor:
+            actor_user = actor
+            actor_role = role or "user"
+            u = _find_user(actor) or {}
+            is_root = bool(u.get("is_root"))
+        else:
+            tok = None
+            if req is not None:
+                tok = (req.headers.get("X-Admin-Token")
+                       or req.headers.get("X-Team-Token"))
+            if tok:
+                if ADMIN_TOKEN and tok == ADMIN_TOKEN:
+                    actor_user = ADMIN_USERNAME or "admin"
+                    actor_role = "superior"
+                    is_root = True
+                else:
+                    sess = _session_for(tok)
+                    if sess:
+                        actor_user = sess.get("username", "unknown")
+                        actor_role = sess.get("role", "employee")
+                        u = _find_user(actor_user) or {}
+                        is_root = bool(u.get("is_root"))
 
         ip = ""
         if req is not None:
@@ -3491,7 +3500,7 @@ def admin_login():
     # Path 1: env break-glass
     if u == ADMIN_USERNAME and p == ADMIN_PASSWORD:
         _clear_login_failures(u)
-        _audit(request, "login_success", target=u, detail="env break-glass")
+        _audit(request, "login_success", target=u, detail="env break-glass", actor=u, role="superior")
         return jsonify({
             "token": ADMIN_TOKEN,
             "username": ADMIN_USERNAME,
@@ -3510,7 +3519,7 @@ def admin_login():
 
     if authed:
         _clear_login_failures(u)
-        _audit(request, "login_success", target=u, detail=f"role={user_rec.get('role', 'employee')}")
+        _audit(request, "login_success", target=u, detail=f"role={user_rec.get('role', 'employee')}", actor=u, role=user_rec.get("role", "employee"))
         token = secrets.token_urlsafe(32)
         sessions = load_sessions()
         sessions["sessions"][token] = {
@@ -3835,7 +3844,7 @@ def team_login():
     role = (u.get("role") or "employee").lower()
     is_root = bool(u.get("is_root"))
     if not is_root and role != "superior":
-        _audit(request, "team_login_denied", target=u["username"], detail=f"role={role}", success=False)
+        _audit(request, "team_login_denied", target=u["username"], detail=f"role={role}", success=False, actor=u["username"], role=role)
         return jsonify({
             "error": "Access denied. Only a superior or root user may use the Team portal.",
         }), 403
@@ -3862,7 +3871,7 @@ def team_login():
         }), 401
 
     _clear_login_failures(username)
-    _audit(request, "login_success", target=u["username"], detail=f"role={role}")
+    _audit(request, "login_success", target=u["username"], detail=f"role={role}", actor=u["username"], role=role)
     token = secrets.token_urlsafe(32)
     sessions = load_sessions()
     sessions["sessions"][token] = {
