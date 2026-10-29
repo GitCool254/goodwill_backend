@@ -1062,6 +1062,10 @@ SMSGATE_URL       = os.environ.get("SMSGATE_URL", "https://api.sms-gate.app/3rdp
 SMSGATE_USERNAME  = os.environ.get("SMSGATE_USERNAME", "")
 SMSGATE_PASSWORD  = os.environ.get("SMSGATE_PASSWORD", "")
 SMSGATE_DEVICE_ID = os.environ.get("SMSGATE_DEVICE_ID", "")
+try:
+    SMSGATE_SIM_NUMBER = int(os.environ.get("SMSGATE_SIM_NUMBER", "1") or "1")
+except ValueError:
+    SMSGATE_SIM_NUMBER = 1
 
 SESSION_TTL_HOURS = 8
 OTP_TTL_MINUTES   = 10
@@ -1150,6 +1154,7 @@ def _send_otp_sms(phone, code):
             },
             "phoneNumbers": [phone],
             "deviceId":     SMSGATE_DEVICE_ID,
+            "simNumber":    SMSGATE_SIM_NUMBER,
         }
         r = requests.post(
             endpoint,
@@ -1219,7 +1224,8 @@ def require_superior(req):
 
 def _ensure_root_admin_bootstrap():
     """Idempotent: ensure env-var ADMIN_USERNAME exists in users.json as superior.
-    Does NOT override env-var password path. Sets phone from ADMIN_PHONE if present."""
+    Does NOT override env-var password path.
+    Phone is managed via Team Portal (POST /team/users/<id>/phone), not env vars."""
     if not ADMIN_USERNAME:
         return
     users = load_users()
@@ -1228,12 +1234,11 @@ def _ensure_root_admin_bootstrap():
         if (u.get("username") or "").lower() == ADMIN_USERNAME.lower():
             existing = u
             break
-    admin_phone = (os.environ.get("ADMIN_PHONE") or "").strip()
     if not existing:
         users["users"].append({
             "id": uuid.uuid4().hex[:12],
             "username": ADMIN_USERNAME,
-            "phone": admin_phone,
+            "phone": "",
             "role": "superior",
             "is_active": True,
             "is_root": True,
@@ -1243,11 +1248,9 @@ def _ensure_root_admin_bootstrap():
             "last_login": None,
         })
         save_users(users)
-        print(f"Bootstrapped root admin '{ADMIN_USERNAME}' (phone={'set' if admin_phone else 'MISSING — OTP reset unavailable until ADMIN_PHONE set'})")
-    elif admin_phone and not existing.get("phone"):
-        existing["phone"] = admin_phone
-        save_users(users)
-        print(f"Backfilled ADMIN_PHONE onto root admin '{ADMIN_USERNAME}'")
+        print(f"Bootstrapped root admin '{ADMIN_USERNAME}' (phone=MISSING - set via Team Portal Edit phone)")
+    elif not existing.get("phone"):
+        print(f"Root admin '{ADMIN_USERNAME}' has no phone - set via Team Portal Edit phone")
 
 # Two-layer lock:
 #  • cmst_thread_lock  → protects against concurrent threads inside one worker process
@@ -1333,9 +1336,9 @@ def _record_login_failure(username):
     save_lockouts(lo)
     try:
         if locked:
-            _audit(request, "login_locked", target=username, detail=f"failures={rec['failures']}", success=False)
+            _audit(request, "login_locked", target=username, detail=f"failures={rec['failures']}", success=False, actor=username, role="unauthenticated")
         else:
-            _audit(request, "login_failure", target=username, detail=f"failures={rec['failures']}", success=False)
+            _audit(request, "login_failure", target=username, detail=f"failures={rec['failures']}", success=False, actor=username, role="unauthenticated")
     except Exception as _audit_err:
         print(f"warn: audit in _record_login_failure: {_audit_err}")
     if locked:
@@ -4085,6 +4088,34 @@ def team_set_password(user_id):
     save_sessions(sessions)
     _audit(request, "user_password_reset_admin", target=found["username"], detail="set by superior")
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/team/users/<user_id>/phone", methods=["POST"])
+@limiter.limit("20 per minute")
+def team_set_phone(user_id):
+    """Superior-only. Update a user's phone (used as OTP destination)."""
+    sess = require_superior(request)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    phone = (data.get("phone") or "").strip()
+    if not phone:
+        return jsonify({"error": "phone required"}), 400
+    if not re.match(r"^\+\d{8,15}$", phone):
+        return jsonify({"error": "phone must be E.164 format (e.g. +254712345678)"}), 400
+    users = load_users()
+    found = None
+    for u in users["users"]:
+        if u.get("id") == user_id:
+            u["phone"] = phone
+            u["phone_updated_at"] = datetime.utcnow().isoformat() + "Z"
+            found = u
+            break
+    if not found:
+        return jsonify({"error": "User not found"}), 404
+    save_users(users)
+    _audit(request, "user_phone_updated", target=found["username"], detail=f"phone={phone[:4]}***{phone[-2:]}")
+    return jsonify({"status": "ok", "phone": phone}), 200
 
 
 @app.route("/team/audit", methods=["GET"])
