@@ -1073,6 +1073,11 @@ LOCKOUT_KEY         = "state/lockouts.json"
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES     = 15
 
+# Audit log (append-only, immutable in practice)
+AUDIT_FILE        = os.path.join(BASE_DIR, "audit.json")
+AUDIT_KEY         = "state/audit.json"
+AUDIT_MAX_ENTRIES = 50000
+
 
 def _load_json_store(key, filepath, default):
     if r2_client:
@@ -1320,14 +1325,21 @@ def _record_login_failure(username):
     rec = lo["lockouts"].get(key, {"failures": 0})
     rec["failures"] = rec.get("failures", 0) + 1
     rec["last_failure_at"] = datetime.utcnow().isoformat()
-    if rec["failures"] >= MAX_FAILED_ATTEMPTS:
+    locked = rec["failures"] >= MAX_FAILED_ATTEMPTS
+    if locked:
         until = datetime.utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
         rec["locked_until"] = until.isoformat()
-        lo["lockouts"][key] = rec
-        save_lockouts(lo)
-        return True, LOCKOUT_MINUTES * 60, rec["failures"]
     lo["lockouts"][key] = rec
     save_lockouts(lo)
+    try:
+        if locked:
+            _audit(request, "login_locked", target=username, detail=f"failures={rec['failures']}", success=False)
+        else:
+            _audit(request, "login_failure", target=username, detail=f"failures={rec['failures']}", success=False)
+    except Exception as _audit_err:
+        print(f"warn: audit in _record_login_failure: {_audit_err}")
+    if locked:
+        return True, LOCKOUT_MINUTES * 60, rec["failures"]
     return False, 0, rec["failures"]
 
 
@@ -1339,6 +1351,59 @@ def _clear_login_failures(username):
     if key in lo.get("lockouts", {}):
         lo["lockouts"].pop(key, None)
         save_lockouts(lo)
+
+
+# ==========================================================
+# AUDIT LOG (append-only, immutable, read-only view)
+# ==========================================================
+def _audit(req, action, target="", detail="", success=True):
+    """Append an audit entry. Never raises — logs to stderr on failure."""
+    try:
+        actor_user, actor_role, is_root = "anonymous", "anonymous", False
+        tok = None
+        if req is not None:
+            tok = (req.headers.get("X-Admin-Token")
+                   or req.headers.get("X-Team-Token"))
+        if tok:
+            if ADMIN_TOKEN and tok == ADMIN_TOKEN:
+                actor_user = ADMIN_USERNAME or "admin"
+                actor_role = "superior"
+                is_root = True
+            else:
+                sess = _session_for(tok)
+                if sess:
+                    actor_user = sess.get("username", "unknown")
+                    actor_role = sess.get("role", "employee")
+                    u = _find_user(actor_user) or {}
+                    is_root = bool(u.get("is_root"))
+
+        ip = ""
+        if req is not None:
+            ip = (req.headers.get("X-Forwarded-For") or req.remote_addr or "").split(",")[0].strip()
+
+        entry = {
+            "ts":      datetime.utcnow().isoformat() + "Z",
+            "actor":   actor_user,
+            "role":    actor_role,
+            "is_root": is_root,
+            "action":  action,
+            "target":  str(target),
+            "detail":  str(detail),
+            "success": bool(success),
+            "ip":      ip,
+        }
+
+        store = _load_json_store(AUDIT_KEY, AUDIT_FILE, {"entries": []})
+        entries = store.get("entries", [])
+        entries.append(entry)
+        if len(entries) > AUDIT_MAX_ENTRIES:
+            entries = entries[-AUDIT_MAX_ENTRIES:]
+        store["entries"] = entries
+        _save_json_store(AUDIT_KEY, AUDIT_FILE, store)
+        return True
+    except Exception as e:
+        print(f"warn: audit write failed: {e}")
+        return False
 
 
 def record_ticket_sale(quantity: int):
@@ -3426,6 +3491,7 @@ def admin_login():
     # Path 1: env break-glass
     if u == ADMIN_USERNAME and p == ADMIN_PASSWORD:
         _clear_login_failures(u)
+        _audit(request, "login_success", target=u, detail="env break-glass")
         return jsonify({
             "token": ADMIN_TOKEN,
             "username": ADMIN_USERNAME,
@@ -3444,6 +3510,7 @@ def admin_login():
 
     if authed:
         _clear_login_failures(u)
+        _audit(request, "login_success", target=u, detail=f"role={user_rec.get('role', 'employee')}")
         token = secrets.token_urlsafe(32)
         sessions = load_sessions()
         sessions["sessions"][token] = {
@@ -3508,6 +3575,7 @@ def admin_save_products():
         return jsonify({"error": "Both lists must be arrays"}), 400
 
     save_products(data)
+    _audit(request, "product_save", target="products", detail=f"featured={len(data['sampleProducts'])} catalog={len(data['catalogItems'])}")
     print(
         f"✅ Admin saved products "
         f"(featured={len(data['sampleProducts'])}, "
@@ -3554,6 +3622,7 @@ def admin_upload_image():
         fp.write(file_bytes)
 
     print(f"✅ Admin uploaded image: {filename}")
+    _audit(request, "image_upload", target=filename, detail=f"size={len(file_bytes)} bytes")
     return jsonify({
         "status": "ok",
         "url": f"/products/{filename}",
@@ -3594,6 +3663,7 @@ def admin_save_donations():
         return jsonify({"error": "programs must be an array"}), 400
 
     save_donations(data)
+    _audit(request, "donation_save", target="donations", detail=f"programs={len(data['programs'])}")
     print(f"✅ Admin saved donations ({len(data['programs'])} programs)")
     return jsonify({"status": "ok"}), 200
 
@@ -3642,6 +3712,7 @@ def auth_request_reset_otp():
     if not _send_otp_sms(phone, code):
         return jsonify({"error": "SMS service unavailable. Contact admin."}), 503
 
+    _audit(request, "otp_requested", target=username, detail=f"phone_masked={masked}")
     return jsonify({"status": "ok", "phone_masked": masked, "message": "OTP sent."}), 200
 
 
@@ -3710,6 +3781,7 @@ def auth_verify_reset_otp():
     }
     save_sessions(sessions)
 
+    _audit(request, "password_reset_via_otp", target=username, detail="OTP verified")
     return jsonify({"status": "ok", "message": "Password updated. You can log in now."}), 200
 
 
@@ -3763,6 +3835,7 @@ def team_login():
     role = (u.get("role") or "employee").lower()
     is_root = bool(u.get("is_root"))
     if not is_root and role != "superior":
+        _audit(request, "team_login_denied", target=u["username"], detail=f"role={role}", success=False)
         return jsonify({
             "error": "Access denied. Only a superior or root user may use the Team portal.",
         }), 403
@@ -3789,6 +3862,7 @@ def team_login():
         }), 401
 
     _clear_login_failures(username)
+    _audit(request, "login_success", target=u["username"], detail=f"role={role}")
     token = secrets.token_urlsafe(32)
     sessions = load_sessions()
     sessions["sessions"][token] = {
@@ -3816,12 +3890,43 @@ def team_login():
 @app.route("/team/logout", methods=["POST"])
 @limiter.limit("60 per minute")
 def team_logout():
-    token = request.headers.get("X-Team-Token")
+    token = request.headers.get("X-Team-Token") or request.headers.get("X-Admin-Token")
     if token:
-        sessions = load_sessions()
-        sessions["sessions"].pop(token, None)
-        save_sessions(sessions)
+        sess = _session_for(token)
+        if sess:
+            _audit(request, "logout", target=sess.get("username", "unknown"), detail="session invalidated")
+            sessions = load_sessions()
+            sessions["sessions"].pop(token, None)
+            save_sessions(sessions)
+        elif ADMIN_TOKEN and token == ADMIN_TOKEN:
+            _audit(request, "logout", target=ADMIN_USERNAME or "admin", detail="env token (no-op)")
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/team/me", methods=["GET"])
+@limiter.limit("120 per minute")
+def team_me():
+    """Return current identity from session token or env admin token."""
+    tok = request.headers.get("X-Admin-Token") or request.headers.get("X-Team-Token")
+    if not tok:
+        return jsonify({"error": "Unauthorized"}), 401
+    if ADMIN_TOKEN and tok == ADMIN_TOKEN:
+        return jsonify({
+            "username": ADMIN_USERNAME or "admin",
+            "role": "superior",
+            "is_root": True,
+        }), 200
+    sess = _session_for(tok)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+    u = _find_user(sess.get("username", "")) or {}
+    if not u or not u.get("is_active", True):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({
+        "username": u["username"],
+        "role":     u.get("role", "employee"),
+        "is_root":  bool(u.get("is_root")),
+    }), 200
 
 
 @app.route("/team/users", methods=["GET"])
@@ -3871,6 +3976,7 @@ def team_create_user():
     }
     users["users"].append(new_user)
     save_users(users)
+    _audit(request, "user_create", target=username, detail=f"role={role} phone={phone[:4]}***")
     return jsonify({"status": "ok", "user": {k: v for k, v in new_user.items() if k != "password_hash"}}), 200
 
 
@@ -3897,6 +4003,7 @@ def _toggle_user_active(user_id, active):
             if (s.get("username") or "").lower() != found["username"].lower()
         }
         save_sessions(sessions)
+    _audit(request, "user_deactivate" if not active else "user_reactivate", target=found["username"], detail=f"id={user_id}")
     return jsonify({"status": "ok", "is_active": active}), 200
 
 
@@ -3936,6 +4043,7 @@ def team_delete_user(user_id):
         if (s.get("username") or "").lower() != target["username"].lower()
     }
     save_sessions(sessions)
+    _audit(request, "user_delete", target=target["username"], detail=f"id={user_id}")
     return jsonify({"status": "ok"}), 200
 
 
@@ -3966,7 +4074,39 @@ def team_set_password(user_id):
         if (s.get("username") or "").lower() != found["username"].lower()
     }
     save_sessions(sessions)
+    _audit(request, "user_password_reset_admin", target=found["username"], detail="set by superior")
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/team/audit", methods=["GET"])
+@limiter.limit("60 per minute")
+def team_audit():
+    """Superior-only. Returns newest-first audit entries filtered by window."""
+    if not require_superior(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    window = (request.args.get("window") or "24h").lower()
+    delta_map = {"24h": 1, "3d": 3, "7d": 7, "14d": 14}
+    days = delta_map.get(window)
+    if days is None:
+        return jsonify({"error": "invalid window. use 24h, 3d, 7d, or 14d"}), 400
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    store = _load_json_store(AUDIT_KEY, AUDIT_FILE, {"entries": []})
+    entries = store.get("entries", [])
+    filtered = []
+    for e in entries:
+        ts = e.get("ts", "")
+        try:
+            t = datetime.fromisoformat(ts.rstrip("Z"))
+        except Exception:
+            continue
+        if t >= cutoff:
+            filtered.append(e)
+    filtered.sort(key=lambda x: x.get("ts", ""), reverse=True)
+    return jsonify({
+        "window": window,
+        "count": len(filtered),
+        "entries": filtered,
+    }), 200
 
 
 # --------------------------------------------------
