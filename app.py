@@ -1031,6 +1031,22 @@ def require_admin(req):
     return bool(token) and token == ADMIN_TOKEN
 
 
+def require_admin_or_session(req):
+    """Accepts env break-glass admin token OR any valid active session
+    (root / superior / employee). Frontend stores session tokens in
+    X-Admin-Token, so we check both headers."""
+    if require_admin(req):
+        return True
+    tok = req.headers.get("X-Admin-Token") or req.headers.get("X-Team-Token")
+    if not tok:
+        return False
+    rec = _session_for(tok)
+    if not rec:
+        return False
+    user = _find_user(rec.get("username", ""))
+    return bool(user and user.get("is_active", True))
+
+
 # ==========================================================
 # TEAM / AUTH INFRASTRUCTURE (additive — does not touch
 # env-var ADMIN_USERNAME/PASSWORD/TOKEN break-glass path)
@@ -1050,6 +1066,12 @@ SMSGATE_DEVICE_ID = os.environ.get("SMSGATE_DEVICE_ID", "")
 SESSION_TTL_HOURS = 8
 OTP_TTL_MINUTES   = 10
 OTP_MAX_ATTEMPTS  = 5
+
+# Login lockout (per username, unified across /admin and /team)
+LOCKOUT_FILE        = os.path.join(BASE_DIR, "lockouts.json")
+LOCKOUT_KEY         = "state/lockouts.json"
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES     = 15
 
 
 def _load_json_store(key, filepath, default):
@@ -1254,6 +1276,69 @@ if all(
     )
 
 print("🟢 R2 ENABLED:", bool(r2_client))
+
+
+# ==========================================================
+# LOGIN LOCKOUT (per username, unified across /admin + /team)
+# ==========================================================
+def load_lockouts():
+    return _load_json_store(LOCKOUT_KEY, LOCKOUT_FILE, {"lockouts": {}})
+
+
+def save_lockouts(data):
+    _save_json_store(LOCKOUT_KEY, LOCKOUT_FILE, data)
+
+
+def _lockout_status(username):
+    """Return (is_locked, seconds_remaining, failures)."""
+    if not username:
+        return False, 0, 0
+    lo = load_lockouts().get("lockouts", {}).get(username.lower())
+    if not lo:
+        return False, 0, 0
+    locked_until_str = lo.get("locked_until")
+    if locked_until_str:
+        try:
+            until = datetime.fromisoformat(locked_until_str)
+        except Exception:
+            until = None
+        if until and datetime.utcnow() < until:
+            remaining = max(0, int((until - datetime.utcnow()).total_seconds()))
+            return True, remaining, lo.get("failures", 0)
+        _clear_login_failures(username)
+        return False, 0, 0
+    return False, 0, lo.get("failures", 0)
+
+
+def _record_login_failure(username):
+    """Increment failures; lock after MAX_FAILED_ATTEMPTS.
+    Returns (is_locked, seconds_remaining, failures)."""
+    if not username:
+        return False, 0, 0
+    lo = load_lockouts()
+    key = username.lower()
+    rec = lo["lockouts"].get(key, {"failures": 0})
+    rec["failures"] = rec.get("failures", 0) + 1
+    rec["last_failure_at"] = datetime.utcnow().isoformat()
+    if rec["failures"] >= MAX_FAILED_ATTEMPTS:
+        until = datetime.utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+        rec["locked_until"] = until.isoformat()
+        lo["lockouts"][key] = rec
+        save_lockouts(lo)
+        return True, LOCKOUT_MINUTES * 60, rec["failures"]
+    lo["lockouts"][key] = rec
+    save_lockouts(lo)
+    return False, 0, rec["failures"]
+
+
+def _clear_login_failures(username):
+    if not username:
+        return
+    lo = load_lockouts()
+    key = username.lower()
+    if key in lo.get("lockouts", {}):
+        lo["lockouts"].pop(key, None)
+        save_lockouts(lo)
 
 
 def record_ticket_sale(quantity: int):
@@ -3310,32 +3395,100 @@ def serve_product_image(filename):
 # ADMIN ENDPOINTS
 # --------------------------------------------------
 @app.route("/admin/login", methods=["POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("30 per minute")
 def admin_login():
-    """Exchange credentials for a bearer token."""
+    """Exchange credentials for a bearer token.
+    Paths:
+      1) env ADMIN_USERNAME + ADMIN_PASSWORD  -> ADMIN_TOKEN (break-glass)
+      2) any active user (root/superior/employee) with valid hash -> session token
+    Lockout: 5 failures per username within LOCKOUT_MINUTES -> 429 with locked_until.
+    """
     if not ADMIN_PASSWORD or not ADMIN_TOKEN:
         return jsonify({"error": "Admin portal not configured"}), 503
 
     data = request.get_json(force=True) or {}
     u = (data.get("username") or "").strip()
     p = (data.get("password") or "").strip()
+    if not u or not p:
+        return jsonify({"error": "username and password required"}), 400
 
+    # Lockout gate
+    locked, remaining, _fails = _lockout_status(u)
+    if locked:
+        until_iso = (datetime.utcnow() + timedelta(seconds=remaining)).isoformat() + "Z"
+        return jsonify({
+            "error": f"Account locked. Try again in {remaining // 60}m {remaining % 60}s.",
+            "locked": True,
+            "seconds_remaining": remaining,
+            "locked_until": until_iso,
+        }), 429
+
+    # Path 1: env break-glass
     if u == ADMIN_USERNAME and p == ADMIN_PASSWORD:
-        return jsonify({"token": ADMIN_TOKEN}), 200
+        _clear_login_failures(u)
+        return jsonify({
+            "token": ADMIN_TOKEN,
+            "username": ADMIN_USERNAME,
+            "role": "superior",
+            "is_root": True,
+        }), 200
 
-    # Override password (set via OTP reset) — fallback for root admin
-    if u == ADMIN_USERNAME:
-        user_rec = _find_user(ADMIN_USERNAME)
-        if user_rec and user_rec.get("password_hash") and check_password_hash(user_rec["password_hash"], p):
-            return jsonify({"token": ADMIN_TOKEN}), 200
+    # Path 2: any user with valid hash (root / superior / employee)
+    user_rec = _find_user(u)
+    authed = False
+    if user_rec and user_rec.get("is_active", True):
+        if user_rec.get("password_hash") and check_password_hash(user_rec["password_hash"], p):
+            authed = True
+        elif user_rec.get("is_root") and user_rec["username"] == ADMIN_USERNAME and p == ADMIN_PASSWORD:
+            authed = True
 
-    return jsonify({"error": "Invalid credentials"}), 401
+    if authed:
+        _clear_login_failures(u)
+        token = secrets.token_urlsafe(32)
+        sessions = load_sessions()
+        sessions["sessions"][token] = {
+            "username":   user_rec["username"],
+            "role":       user_rec.get("role", "employee"),
+            "created_at": datetime.utcnow().isoformat(),
+            "expires_at": (datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS)).isoformat(),
+        }
+        save_sessions(sessions)
+        users = load_users()
+        for user in users["users"]:
+            if (user.get("username") or "").lower() == u.lower():
+                user["last_login"] = datetime.utcnow().isoformat() + "Z"
+                break
+        save_users(users)
+        return jsonify({
+            "token": token,
+            "username": user_rec["username"],
+            "role": user_rec.get("role", "employee"),
+            "is_root": user_rec.get("is_root", False),
+            "expires_in_hours": SESSION_TTL_HOURS,
+        }), 200
+
+    # Failed attempt
+    is_locked, secs, fails = _record_login_failure(u)
+    if is_locked:
+        until_iso = (datetime.utcnow() + timedelta(seconds=secs)).isoformat() + "Z"
+        return jsonify({
+            "error": f"Account locked for {LOCKOUT_MINUTES} minutes due to too many failed attempts.",
+            "locked": True,
+            "seconds_remaining": secs,
+            "locked_until": until_iso,
+        }), 429
+
+    return jsonify({
+        "error": f"Invalid credentials. {MAX_FAILED_ATTEMPTS - fails} attempt(s) remaining.",
+        "failures": fails,
+        "remaining_attempts": MAX_FAILED_ATTEMPTS - fails,
+    }), 401
 
 
 @app.route("/admin/products", methods=["GET"])
 @limiter.limit("60 per minute")
 def admin_get_products():
-    if not require_admin(request):
+    if not require_admin_or_session(request):
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify(load_products()), 200
 
@@ -3343,7 +3496,7 @@ def admin_get_products():
 @app.route("/admin/products", methods=["POST"])
 @limiter.limit("30 per minute")
 def admin_save_products():
-    if not require_admin(request):
+    if not require_admin_or_session(request):
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json(force=True)
@@ -3366,7 +3519,7 @@ def admin_save_products():
 @app.route("/admin/upload_image", methods=["POST"])
 @limiter.limit("30 per minute")
 def admin_upload_image():
-    if not require_admin(request):
+    if not require_admin_or_session(request):
         return jsonify({"error": "Unauthorized"}), 401
 
     if "file" not in request.files:
@@ -3423,7 +3576,7 @@ def public_donations():
 @app.route("/admin/donations", methods=["GET"])
 @limiter.limit("60 per minute")
 def admin_get_donations():
-    if not require_admin(request):
+    if not require_admin_or_session(request):
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify(load_donations()), 200
 
@@ -3431,7 +3584,7 @@ def admin_get_donations():
 @app.route("/admin/donations", methods=["POST"])
 @limiter.limit("30 per minute")
 def admin_save_donations():
-    if not require_admin(request):
+    if not require_admin_or_session(request):
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json(force=True)
@@ -3544,6 +3697,9 @@ def auth_verify_reset_otp():
             break
     save_users(users)
 
+    # OTP success proves identity — clear any lockout for this user
+    _clear_login_failures(username)
+
     otps["otps"].pop(username.lower(), None)
     save_otps(otps)
 
@@ -3561,17 +3717,55 @@ def auth_verify_reset_otp():
 # TEAM: login / logout / user management
 # --------------------------------------------------
 @app.route("/team/login", methods=["POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("30 per minute")
 def team_login():
+    """Team login — superior/root only. Employees are rejected (403).
+    Lockout: 5 failures per username within LOCKOUT_MINUTES -> 429."""
     data = request.get_json(force=True) or {}
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({"error": "username and password required"}), 400
+
+    # Lockout gate
+    locked, remaining, _fails = _lockout_status(username)
+    if locked:
+        until_iso = (datetime.utcnow() + timedelta(seconds=remaining)).isoformat() + "Z"
+        return jsonify({
+            "error": f"Account locked. Try again in {remaining // 60}m {remaining % 60}s.",
+            "locked": True,
+            "seconds_remaining": remaining,
+            "locked_until": until_iso,
+        }), 429
 
     u = _find_user(username)
+
+    # Unknown user — record failure, return generic 401
     if not u:
-        return jsonify({"error": "Invalid credentials"}), 401
+        is_locked, secs, fails = _record_login_failure(username)
+        if is_locked:
+            until_iso = (datetime.utcnow() + timedelta(seconds=secs)).isoformat() + "Z"
+            return jsonify({
+                "error": f"Account locked for {LOCKOUT_MINUTES} minutes due to too many failed attempts.",
+                "locked": True,
+                "seconds_remaining": secs,
+                "locked_until": until_iso,
+            }), 429
+        return jsonify({
+            "error": f"Invalid credentials. {MAX_FAILED_ATTEMPTS - fails} attempt(s) remaining.",
+            "failures": fails,
+        }), 401
+
     if not u.get("is_active", True):
         return jsonify({"error": "Account is deactivated"}), 403
+
+    # Role gate — only superior or root may use /team
+    role = (u.get("role") or "employee").lower()
+    is_root = bool(u.get("is_root"))
+    if not is_root and role != "superior":
+        return jsonify({
+            "error": "Access denied. Only a superior or root user may use the Team portal.",
+        }), 403
 
     authed = False
     if u.get("password_hash") and check_password_hash(u["password_hash"], password):
@@ -3580,29 +3774,41 @@ def team_login():
         authed = True
 
     if not authed:
-        return jsonify({"error": "Invalid credentials"}), 401
+        is_locked, secs, fails = _record_login_failure(username)
+        if is_locked:
+            until_iso = (datetime.utcnow() + timedelta(seconds=secs)).isoformat() + "Z"
+            return jsonify({
+                "error": f"Account locked for {LOCKOUT_MINUTES} minutes due to too many failed attempts.",
+                "locked": True,
+                "seconds_remaining": secs,
+                "locked_until": until_iso,
+            }), 429
+        return jsonify({
+            "error": f"Invalid credentials. {MAX_FAILED_ATTEMPTS - fails} attempt(s) remaining.",
+            "failures": fails,
+        }), 401
 
+    _clear_login_failures(username)
     token = secrets.token_urlsafe(32)
     sessions = load_sessions()
     sessions["sessions"][token] = {
         "username":   u["username"],
-        "role":       u.get("role", "employee"),
+        "role":       role,
         "created_at": datetime.utcnow().isoformat(),
         "expires_at": (datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS)).isoformat(),
     }
     save_sessions(sessions)
-
     users = load_users()
     for user in users["users"]:
         if (user.get("username") or "").lower() == username.lower():
             user["last_login"] = datetime.utcnow().isoformat() + "Z"
             break
     save_users(users)
-
     return jsonify({
         "token": token,
         "username": u["username"],
-        "role": u.get("role", "employee"),
+        "role": role,
+        "is_root": is_root,
         "expires_in_hours": SESSION_TTL_HOURS,
     }), 200
 
