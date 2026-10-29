@@ -1042,7 +1042,7 @@ SESSIONS_KEY  = "state/sessions.json"
 OTPS_FILE     = os.path.join(BASE_DIR, "otps.json")
 OTPS_KEY      = "state/otps.json"
 
-SMSGATE_URL       = os.environ.get("SMSGATE_URL", "https://api.smsgate.me/v3/send")
+SMSGATE_URL       = os.environ.get("SMSGATE_URL", "https://api.sms-gate.app/3rdparty/v1")
 SMSGATE_USERNAME  = os.environ.get("SMSGATE_USERNAME", "")
 SMSGATE_PASSWORD  = os.environ.get("SMSGATE_PASSWORD", "")
 SMSGATE_DEVICE_ID = os.environ.get("SMSGATE_DEVICE_ID", "")
@@ -1108,21 +1108,30 @@ def save_otps(data):
 
 
 def _send_otp_sms(phone, code):
-    """Send OTP via SMSGate. Fails closed if not configured."""
+    """Send OTP via SMS Gateway for Android (sms-gate.app) 3rdparty API.
+    Uses HTTP Basic Auth; POSTs to {base}/messages. Fails closed if not
+    configured. Returns True only on HTTP 2xx."""
     if not (SMSGATE_USERNAME and SMSGATE_PASSWORD and SMSGATE_DEVICE_ID):
         print("SMSGate not configured (SMSGATE_USERNAME/PASSWORD/DEVICE_ID missing)")
         return False
     try:
+        base = (SMSGATE_URL or "").rstrip("/")
+        endpoint = base if base.endswith("/messages") else f"{base}/messages"
         payload = {
-            "username": SMSGATE_USERNAME,
-            "password": SMSGATE_PASSWORD,
-            "deviceId": SMSGATE_DEVICE_ID,
-            "message":  f"Your Goodwill Stores reset code is {code}. Valid 10 min. Never share.",
-            "phone":    phone,
+            "textMessage": {
+                "text": f"Your Goodwill Stores reset code is {code}. Valid 10 min. Never share."
+            },
+            "phoneNumbers": [phone],
+            "deviceId":     SMSGATE_DEVICE_ID,
         }
-        r = requests.post(SMSGATE_URL, json=payload, timeout=15)
+        r = requests.post(
+            endpoint,
+            json=payload,
+            auth=(SMSGATE_USERNAME, SMSGATE_PASSWORD),
+            timeout=15,
+        )
         ok = r.status_code in (200, 201, 202)
-        print(f"  SMSGate OTP send status={r.status_code} ok={ok}")
+        print(f"  SMSGate OTP send status={r.status_code} ok={ok} endpoint={endpoint}")
         return ok
     except Exception as e:
         print("SMSGate exception:", e)
