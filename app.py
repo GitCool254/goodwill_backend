@@ -214,6 +214,14 @@ CORS(
                 "https://goodwillstores.vercel.app",
             ]
         },
+        r"/winners/*": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
         r"/admin/*": {
             "origins": [
                 "https://goodwillrafflestore.onrender.com",
@@ -958,6 +966,8 @@ PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
 PRODUCTS_KEY  = "state/products.json"
 PRODUCT_IMAGES_DIR = os.path.join(BASE_DIR, "storage", "product_images")
 PRODUCT_IMAGES_R2_PREFIX = "products/"
+WINNER_IMAGES_DIR = os.path.join(BASE_DIR, "storage", "winner_images")
+WINNER_IMAGES_R2_PREFIX = "winners/"
 
 # --------------------------------------------------
 # DONATIONS — storage
@@ -1001,6 +1011,7 @@ def save_donations(data):
         f.write(payload.decode())
 
 os.makedirs(PRODUCT_IMAGES_DIR, exist_ok=True)
+os.makedirs(WINNER_IMAGES_DIR, exist_ok=True)
 
 
 def load_products():
@@ -3175,6 +3186,8 @@ def redownload_ticket():
 # --------------------------------------------------
 RECENT_WINNERS_FILE = os.path.join(BASE_DIR, "recent_winners.json")
 RECENT_WINNERS_KEY  = "state/recent_winners.json"
+RECENT_WINNERS_META_FILE = os.path.join(BASE_DIR, "recent_winners_meta.json")
+RECENT_WINNERS_META_KEY  = "state/recent_winners_meta.json"
 SHOW_RECENT_WINNERS = os.environ.get("SHOW_RECENT_WINNERS", "false").lower() == "false"
 
 # Winners detail data (R2-primary, admin-editable, replaces hardcoded array)
@@ -3264,6 +3277,14 @@ def save_recent_winners(winners):
         print("Failed to save recent_winners.json:", e)
 
 
+def load_recent_winners_meta():
+    return _load_json_store(RECENT_WINNERS_META_KEY, RECENT_WINNERS_META_FILE, {"title": ""})
+
+
+def save_recent_winners_meta(data):
+    _save_json_store(RECENT_WINNERS_META_KEY, RECENT_WINNERS_META_FILE, data)
+
+
 def load_winners_detail_data():
     return _load_json_store(WINNERS_DETAIL_DATA_KEY, WINNERS_DETAIL_DATA_FILE, {"winners": []})
 
@@ -3278,10 +3299,18 @@ def recent_winners():
     Returns list of recent winners indicating whether to show them.
     """
     if not _get_ui_toggle("recent_winners", SHOW_RECENT_WINNERS):
-        return jsonify({"show": False, "winners": []}), 200
+        return jsonify({
+            "show": False,
+            "winners": [],
+            "title": load_recent_winners_meta().get("title", ""),
+        }), 200
 
     winners = load_recent_winners()
-    return jsonify({"show": True, "winners": winners}), 200
+    return jsonify({
+        "show": True,
+        "winners": winners,
+        "title": load_recent_winners_meta().get("title", ""),
+    }), 200
 
 @app.route("/check_ticket_status", methods=["POST"])
 @limiter.limit("10 per minute")
@@ -3435,6 +3464,8 @@ def bootstrap():
             "initialized": state.get("initialized", False),
             "today": today,
             "cache": "MISS",
+            "campaign_title": state.get("campaign_title"),
+            "campaign_datetime": state.get("campaign_datetime"),
         }
 
         # Refresh the shared cache so /ticket_state benefits too.
@@ -3448,11 +3479,16 @@ def bootstrap():
 
     # --- recent_winners ---
     if not _get_ui_toggle("recent_winners", SHOW_RECENT_WINNERS):
-        recent_winners_payload = {"show": False, "winners": []}
+        recent_winners_payload = {
+            "show": False,
+            "winners": [],
+            "title": load_recent_winners_meta().get("title", ""),
+        }
     else:
         recent_winners_payload = {
             "show": True,
-            "winners": load_recent_winners()
+            "winners": load_recent_winners(),
+            "title": load_recent_winners_meta().get("title", ""),
         }
 
     response = jsonify({
@@ -3818,6 +3854,63 @@ def admin_upload_image():
         "url": f"/products/{filename}",
         "filename": filename,
     }), 200
+
+# --------------------------------------------------
+# WINNER IMAGE UPLOAD (admin) + SERVE (public)
+# --------------------------------------------------
+@app.route("/admin/upload_winner_image", methods=["POST"])
+@limiter.limit("30 per minute")
+def admin_upload_winner_image():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    if "file" not in request.files:
+        return jsonify({"error": "Missing file"}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "Empty filename"}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        return jsonify({"error": "Unsupported file type"}), 400
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", f.filename)
+    filename = f"{uuid.uuid4().hex[:12]}_{safe_name}"
+    file_bytes = f.read()
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=f"{WINNER_IMAGES_R2_PREFIX}{filename}",
+                Body=file_bytes,
+                ContentType=f.content_type or "application/octet-stream",
+            )
+        except Exception as e:
+            print("R2 winner image upload failed:", e)
+    with open(os.path.join(WINNER_IMAGES_DIR, filename), "wb") as fp:
+        fp.write(file_bytes)
+    _audit(request, "winner_image_uploaded", target=filename, detail=f"size={len(file_bytes)} bytes")
+    return jsonify({
+        "status": "ok",
+        "url": f"/winners/{filename}",
+        "filename": filename,
+    }), 200
+
+
+@app.route("/winners/<filename>", methods=["GET"])
+def serve_winner_image(filename):
+    if not re.match(r"^[a-zA-Z0-9._-]+$", filename):
+        return jsonify({"error": "Invalid filename"}), 400
+    local_path = os.path.join(WINNER_IMAGES_DIR, filename)
+    if os.path.exists(local_path):
+        return send_file(local_path)
+    if r2_client:
+        try:
+            obj = r2_client.get_object(
+                Bucket=R2_BUCKET_NAME, Key=f"{WINNER_IMAGES_R2_PREFIX}{filename}"
+            )
+            return Response(obj["Body"].read(), mimetype="application/octet-stream")
+        except Exception:
+            pass
+    return jsonify({"error": "Not found"}), 404
+
 
 # --------------------------------------------------
 # PUBLIC DONATIONS ENDPOINT
@@ -4318,6 +4411,8 @@ def admin_raffle_state():
         "initial_tickets":      initial_tickets,
         "tickets_sold":         max(initial_tickets - remaining_int, 0) if isinstance(remaining, int) else None,
         "campaign_start_date":  state.get("campaign_start_date"),
+        "campaign_title":       state.get("campaign_title"),
+        "campaign_datetime":    state.get("campaign_datetime"),
         "sold_out_at":          state.get("sold_out_at"),
         "last_calc_date":       state.get("last_calc_date"),
         "is_active":            bool(state.get("initialized") and remaining_int > 0),
@@ -4330,6 +4425,8 @@ def admin_raffle_start():
     if not require_admin_or_session(request):
         return jsonify({"error": "Unauthorized"}), 401
     data = request.get_json(force=True) or {}
+    campaign_title = (data.get("campaign_title") or "").strip()
+    campaign_datetime = (data.get("campaign_datetime") or "").strip()
     try:
         new_initial = int(data.get("initial_tickets") or INITIAL_TICKETS)
     except (ValueError, TypeError):
@@ -4349,18 +4446,22 @@ def admin_raffle_start():
         state["initialized"] = True
         state["last_calc_date"] = today
         state["campaign_start_date"] = today
+        state["campaign_title"] = campaign_title
+        state["campaign_datetime"] = campaign_datetime
         state["sold_out_at"] = None
         save_ticket_state(state)
         if RESET_SALES_ON_CAMPAIGN_START:
             write_sales(0)
 
     _audit(request, "campaign_start", target=str(new_initial),
-           detail=f"prev_initial={prev_initial} prev_remaining={prev_remaining}")
+           detail=f"prev_initial={prev_initial} prev_remaining={prev_remaining} title={campaign_title!r}")
     return jsonify({
         "status": "ok",
         "initial_tickets": new_initial,
         "remaining": new_initial,
         "campaign_start_date": today,
+        "campaign_title": campaign_title,
+        "campaign_datetime": campaign_datetime,
     }), 200
 
 
@@ -4433,7 +4534,10 @@ def admin_set_ui_toggle():
 def admin_get_recent_winners_data():
     if not require_admin_or_session(request):
         return jsonify({"error": "Unauthorized"}), 401
-    return jsonify({"winners": load_recent_winners()}), 200
+    return jsonify({
+        "winners": load_recent_winners(),
+        "title": load_recent_winners_meta().get("title", ""),
+    }), 200
 
 
 @app.route("/admin/recent-winners-data", methods=["POST"])
@@ -4446,7 +4550,15 @@ def admin_set_recent_winners_data():
     if not isinstance(winners, list):
         return jsonify({"error": "winners must be an array"}), 400
     save_recent_winners(winners)
-    _audit(request, "recent_winners_updated", target=f"{len(winners)} entries")
+    title = data.get("title")
+    if isinstance(title, str):
+        meta = load_recent_winners_meta()
+        meta["title"] = title.strip()
+        save_recent_winners_meta(meta)
+    detail = f"{len(winners)} entries"
+    if isinstance(title, str):
+        detail += f", title={title.strip()!r}"
+    _audit(request, "recent_winners_updated", target=detail)
     return jsonify({"status": "ok", "count": len(winners)}), 200
 
 
