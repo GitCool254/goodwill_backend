@@ -1082,6 +1082,10 @@ AUDIT_FILE        = os.path.join(BASE_DIR, "audit.json")
 AUDIT_KEY         = "state/audit.json"
 AUDIT_MAX_ENTRIES = 50000
 
+# Holiday toggles + effects (superior-editable via Team Portal)
+HOLIDAYS_FILE = os.path.join(BASE_DIR, "holidays.json")
+HOLIDAYS_KEY  = "state/holidays.json"
+
 
 def _load_json_store(key, filepath, default):
     if r2_client:
@@ -1445,6 +1449,51 @@ def _audit(req, action, target="", detail="", success=True, actor=None, role=Non
     except Exception as e:
         print(f"warn: audit write failed: {e}")
         return False
+
+
+# ==========================================================
+# HOLIDAY CONFIG (toggles + effects, superior-editable)
+# ==========================================================
+DEFAULT_HOLIDAYS = {
+    "holidays": {
+        "blackfriday": {"enabled": True},
+        "christmas":   {"enabled": True},
+        "newyear":     {"enabled": True},
+        "valentine":   {"enabled": True},
+        "easter":      {"enabled": True},
+        "general":     {"enabled": True, "title": "Labor's Day Special Raffle", "startDate": "", "endDate": ""},
+    },
+    "effects": {
+        "snowfall": {"enabled": False},
+    },
+}
+
+_HOLIDAYS_CACHE = {"cfg": None, "ts": 0.0}
+
+
+def load_holidays():
+    data = _load_json_store(HOLIDAYS_KEY, HOLIDAYS_FILE, DEFAULT_HOLIDAYS)
+    merged = {"holidays": {}, "effects": {}}
+    for hid, cfg in DEFAULT_HOLIDAYS["holidays"].items():
+        merged["holidays"][hid] = {**cfg, **(data.get("holidays", {}).get(hid) or {})}
+    for eid, cfg in DEFAULT_HOLIDAYS["effects"].items():
+        merged["effects"][eid] = {**cfg, **(data.get("effects", {}).get(eid) or {})}
+    return merged
+
+
+def save_holidays(data):
+    _save_json_store(HOLIDAYS_KEY, HOLIDAYS_FILE, data)
+    _HOLIDAYS_CACHE["cfg"] = None  # invalidate cache
+
+
+def load_holidays_cached():
+    now_ts = time()
+    if _HOLIDAYS_CACHE["cfg"] is not None and (now_ts - _HOLIDAYS_CACHE["ts"]) < 5.0:
+        return _HOLIDAYS_CACHE["cfg"]
+    cfg = load_holidays()
+    _HOLIDAYS_CACHE["cfg"] = cfg
+    _HOLIDAYS_CACHE["ts"] = now_ts
+    return cfg
 
 
 def record_ticket_sale(quantity: int):
@@ -1843,15 +1892,41 @@ def is_holiday_active(now=None):
     good_friday = good_friday.replace(hour=0, minute=0, second=0)
     easter_monday = easter_monday.replace(hour=23, minute=59, second=59)
 
+    # Load toggles + user overrides
+    try:
+        cfg = load_holidays_cached()
+    except Exception:
+        cfg = DEFAULT_HOLIDAYS
+    hcfg = cfg.get("holidays", {})
+    def _enabled(hid):
+        return bool(hcfg.get(hid, {}).get("enabled", True))
+
     # Holiday definitions (matching frontend HolidaySystem.jsx)
-    holidays = [
-        {"type": "weekly", "weekday": 4},  # Black Friday: every Friday
-        {"type": "range", "start": datetime(year, 12, 10), "end": datetime(year, 12, 31, 23, 59, 59)},
-        {"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)},
-        {"type": "range", "start": datetime(year, 4, 10), "end": datetime(year, 4, 14, 23, 59, 59)},  # Valentine
-        {"type": "range", "start": good_friday, "end": easter_monday},  # Easter
-        {"type": "range", "start": datetime(year, 4, 30), "end": datetime(year, 5, 1, 23, 59, 59)},  # Labor's Day
-    ]
+    holidays = []
+    if _enabled("blackfriday"):
+        holidays.append({"type": "weekly", "weekday": 4})
+    if _enabled("christmas"):
+        holidays.append({"type": "range", "start": datetime(year, 12, 10), "end": datetime(year, 12, 31, 23, 59, 59)})
+    if _enabled("newyear"):
+        holidays.append({"type": "range", "start": datetime(year, 1, 1), "end": datetime(year, 1, 7, 23, 59, 59)})
+    if _enabled("valentine"):
+        holidays.append({"type": "range", "start": datetime(year, 2, 10), "end": datetime(year, 2, 14, 23, 59, 59)})
+    if _enabled("easter"):
+        holidays.append({"type": "range", "start": good_friday, "end": easter_monday})
+    if _enabled("general"):
+        gen = hcfg.get("general", {})
+        gen_start_str = (gen.get("startDate") or "").strip()
+        gen_end_str = (gen.get("endDate") or "").strip()
+        try:
+            if gen_start_str and gen_end_str:
+                gen_start = datetime.fromisoformat(gen_start_str).replace(hour=0, minute=0, second=0)
+                gen_end = datetime.fromisoformat(gen_end_str).replace(hour=23, minute=59, second=59)
+            else:
+                raise ValueError("empty")
+        except Exception:
+            gen_start = datetime(year, 4, 30)
+            gen_end = datetime(year, 5, 1, 23, 59, 59)
+        holidays.append({"type": "range", "start": gen_start, "end": gen_end})
 
     for h in holidays:
         if h["type"] == "weekly":
@@ -4179,6 +4254,93 @@ def team_audit():
         "window": window,
         "count": len(filtered),
         "entries": filtered,
+    }), 200
+
+
+@app.route("/holidays", methods=["GET"])
+@limiter.limit("60 per minute")
+def public_holidays():
+    """Public read-only holiday toggles + snowfall state."""
+    try:
+        cfg = load_holidays_cached()
+    except Exception:
+        cfg = DEFAULT_HOLIDAYS
+    return jsonify({
+        "holidays": cfg.get("holidays", {}),
+        "effects": cfg.get("effects", {}),
+    }), 200
+
+
+@app.route("/team/holidays", methods=["GET"])
+@limiter.limit("60 per minute")
+def team_holidays_get():
+    """Superior-only read of full holiday config."""
+    if not require_superior(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        cfg = load_holidays_cached()
+    except Exception:
+        cfg = DEFAULT_HOLIDAYS
+    return jsonify({
+        "holidays": cfg.get("holidays", {}),
+        "effects": cfg.get("effects", {}),
+    }), 200
+
+
+@app.route("/team/holidays", methods=["POST"])
+@limiter.limit("20 per minute")
+def team_holidays_post():
+    """Superior-only partial-merge update of holiday toggles / dates / effects."""
+    sess = require_superior(request)
+    if not sess:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(force=True) or {}
+    current = load_holidays()
+
+    if "holidays" in data and isinstance(data["holidays"], dict):
+        for hid, update in data["holidays"].items():
+            if hid not in DEFAULT_HOLIDAYS["holidays"]:
+                continue
+            if not isinstance(update, dict):
+                continue
+            cur = current["holidays"].setdefault(hid, dict(DEFAULT_HOLIDAYS["holidays"][hid]))
+            if "enabled" in update:
+                cur["enabled"] = bool(update["enabled"])
+                _audit(request, "holiday_toggled", target=hid, detail=f"enabled={cur['enabled']}")
+            if hid == "general":
+                if "title" in update:
+                    cur["title"] = str(update["title"])[:120]
+                for dk in ("startDate", "endDate"):
+                    if dk in update:
+                        val = str(update.get(dk) or "").strip()
+                        if val == "":
+                            cur[dk] = ""
+                        else:
+                            try:
+                                datetime.fromisoformat(val)
+                                cur[dk] = val
+                            except Exception:
+                                return jsonify({"error": f"invalid {dk}"}), 400
+                _audit(request, "holiday_general_updated", target="general",
+                       detail=f"title={cur.get('title','')[:40]} start={cur.get('startDate','')} end={cur.get('endDate','')}")
+
+    if "effects" in data and isinstance(data["effects"], dict):
+        for eid, update in data["effects"].items():
+            if eid not in DEFAULT_HOLIDAYS["effects"]:
+                continue
+            if not isinstance(update, dict):
+                continue
+            cur = current["effects"].setdefault(eid, dict(DEFAULT_HOLIDAYS["effects"][eid]))
+            if "enabled" in update:
+                cur["enabled"] = bool(update["enabled"])
+                _audit(request, "snowfall_toggled", target=eid, detail=f"enabled={cur['enabled']}")
+
+    save_holidays(current)
+    return jsonify({
+        "status": "ok",
+        "holidays": current["holidays"],
+        "effects": current["effects"],
     }), 200
 
 
