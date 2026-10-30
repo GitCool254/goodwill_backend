@@ -3166,10 +3166,21 @@ def redownload_ticket():
 # RECENT WINNERS (Announcement Feature)
 # --------------------------------------------------
 RECENT_WINNERS_FILE = os.path.join(BASE_DIR, "recent_winners.json")
+RECENT_WINNERS_KEY  = "state/recent_winners.json"
 SHOW_RECENT_WINNERS = os.environ.get("SHOW_RECENT_WINNERS", "false").lower() == "false"
 
+# Winners detail data (R2-primary, admin-editable, replaces hardcoded array)
+WINNERS_DETAIL_DATA_FILE = os.path.join(BASE_DIR, "winners_detail_data.json")
+WINNERS_DETAIL_DATA_KEY  = "state/winners_detail_data.json"
+
 def load_recent_winners():
-    """Loads recent winners from local JSON file."""
+    """Loads recent winners. R2 primary, local fallback, defaults if neither."""
+    if r2_client:
+        try:
+            obj = r2_client.get_object(Bucket=R2_BUCKET_NAME, Key=RECENT_WINNERS_KEY)
+            return json.loads(obj["Body"].read())
+        except Exception:
+            pass
     if not os.path.exists(RECENT_WINNERS_FILE):
         # Return a default list (or empty) if file doesn't exist
         return [
@@ -3227,12 +3238,30 @@ def load_recent_winners():
         return []
 
 def save_recent_winners(winners):
-    """Saves recent winners to local JSON file."""
+    """Saves recent winners. R2 primary, local fallback."""
+    payload = json.dumps(winners, indent=2).encode()
+    if r2_client:
+        try:
+            r2_client.put_object(
+                Bucket=R2_BUCKET_NAME, Key=RECENT_WINNERS_KEY,
+                Body=payload, ContentType="application/json",
+            )
+            return
+        except Exception as e:
+            print("R2 recent_winners save failed, fallback local:", e)
     try:
         with open(RECENT_WINNERS_FILE, "w") as f:
-            json.dump(winners, f, indent=2)
+            f.write(payload.decode())
     except Exception as e:
         print("Failed to save recent_winners.json:", e)
+
+
+def load_winners_detail_data():
+    return _load_json_store(WINNERS_DETAIL_DATA_KEY, WINNERS_DETAIL_DATA_FILE, {"winners": []})
+
+
+def save_winners_detail_data(data):
+    _save_json_store(WINNERS_DETAIL_DATA_KEY, WINNERS_DETAIL_DATA_FILE, data)
 
 @app.route("/recent_winners", methods=["GET"])
 @limiter.limit("10 per minute")
@@ -4389,6 +4418,56 @@ def admin_set_ui_toggle():
     save_ui_toggles(state)
     _audit(request, f"toggle_{key}", target=key, detail=f"prev={prev} new={value}")
     return jsonify({"status": "ok", "key": key, "value": value}), 200
+
+
+@app.route("/admin/recent-winners-data", methods=["GET"])
+@limiter.limit("60 per minute")
+def admin_get_recent_winners_data():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({"winners": load_recent_winners()}), 200
+
+
+@app.route("/admin/recent-winners-data", methods=["POST"])
+@limiter.limit("20 per minute")
+def admin_set_recent_winners_data():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    winners = data.get("winners")
+    if not isinstance(winners, list):
+        return jsonify({"error": "winners must be an array"}), 400
+    save_recent_winners(winners)
+    _audit(request, "recent_winners_updated", target=f"{len(winners)} entries")
+    return jsonify({"status": "ok", "count": len(winners)}), 200
+
+
+@app.route("/admin/winners-detail-data", methods=["GET"])
+@limiter.limit("60 per minute")
+def admin_get_winners_detail_data():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({"winners": load_winners_detail_data().get("winners", [])}), 200
+
+
+@app.route("/admin/winners-detail-data", methods=["POST"])
+@limiter.limit("20 per minute")
+def admin_set_winners_detail_data():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    winners = data.get("winners")
+    if not isinstance(winners, list):
+        return jsonify({"error": "winners must be an array"}), 400
+    save_winners_detail_data({"winners": winners})
+    _audit(request, "winners_detail_updated", target=f"{len(winners)} entries")
+    return jsonify({"status": "ok", "count": len(winners)}), 200
+
+
+@app.route("/winners-detail-data", methods=["GET"])
+@limiter.limit("60 per minute")
+def public_winners_detail_data():
+    return jsonify({"winners": load_winners_detail_data().get("winners", [])}), 200
 
 
 @app.route("/team/audit", methods=["GET"])
