@@ -118,6 +118,14 @@ CORS(
                 "https://goodwillstores.vercel.app",
             ]
         },
+        r"/winners-detail-data": {
+            "origins": [
+                "https://goodwillrafflestore.onrender.com",
+                "https://goodwillstores.onrender.com",
+                "https://goodwillrafflestores.vercel.app",
+                "https://goodwillstores.vercel.app",
+            ]
+        },
         r"/paypal_config": {
             "origins": [
                 "https://goodwillrafflestore.onrender.com",
