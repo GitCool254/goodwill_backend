@@ -632,8 +632,15 @@ def apply_daily_decay_if_needed():
         state = load_ticket_state()
         today = datetime.utcnow().strftime("%Y-%m-%d")
 
+        initial_tickets = int(state.get("initial_tickets", INITIAL_TICKETS))
+        campaign_start_str = (
+            state.get("campaign_start_date")
+            or SIMULATED_START_DATE
+            or RAFFLE_START_DATE
+        )
+
         sold = read_sales()
-        max_allowed = max(INITIAL_TICKETS - sold, 0)
+        max_allowed = max(initial_tickets - sold, 0)
 
         # -----------------------------
         # INITIALIZE (first run ever)
@@ -666,13 +673,13 @@ def apply_daily_decay_if_needed():
 
         # -----------------------------                                        # DECAY COMPUTATION
         # -----------------------------
-        start_date_str = SIMULATED_START_DATE or RAFFLE_START_DATE
+        start_date_str = campaign_start_str
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         days_passed = max((datetime.utcnow() - start_date).days, 0)
 
         total_decay = compute_total_decay(days_passed)
 
-        authoritative_remaining = max(INITIAL_TICKETS - total_decay - sold, 0)
+        authoritative_remaining = max(initial_tickets - total_decay - sold, 0)
 
         # FINAL HARD GUARD (never increase)
         if authoritative_remaining > state["remaining"]:
@@ -1082,6 +1089,13 @@ AUDIT_FILE        = os.path.join(BASE_DIR, "audit.json")
 AUDIT_KEY         = "state/audit.json"
 AUDIT_MAX_ENTRIES = 50000
 
+# UI toggles (state-first, env-fallback)
+UI_TOGGLES_FILE = os.path.join(BASE_DIR, "ui_toggles.json")
+UI_TOGGLES_KEY  = "state/ui_toggles.json"
+
+# Campaign start behavior
+RESET_SALES_ON_CAMPAIGN_START = True
+
 # Holiday toggles + effects (superior-editable via Team Portal)
 HOLIDAYS_FILE = os.path.join(BASE_DIR, "holidays.json")
 HOLIDAYS_KEY  = "state/holidays.json"
@@ -1116,6 +1130,28 @@ def _save_json_store(key, filepath, data):
             print("R2 store save failed, fallback local:", e)
     with open(filepath, "w") as f:
         f.write(payload.decode())
+
+
+def load_ui_toggles():
+    return _load_json_store(UI_TOGGLES_KEY, UI_TOGGLES_FILE, {})
+
+
+def save_ui_toggles(data):
+    _save_json_store(UI_TOGGLES_KEY, UI_TOGGLES_FILE, data)
+
+
+def _get_ui_toggle(name, env_default_bool):
+    """State-first resolution. If ui_toggles.json has an entry for `name`,
+    use it (bool). Otherwise fall back to `env_default_bool` (the current
+    effective value derived from env vars). Preserves exact behaviour
+    until admin flips a toggle."""
+    try:
+        state = load_ui_toggles()
+        if isinstance(state, dict) and name in state:
+            return bool(state[name])
+    except Exception as e:
+        print(f"warn: _get_ui_toggle({name}) read failed: {e}")
+    return bool(env_default_bool)
 
 
 def load_users():
@@ -1503,7 +1539,7 @@ def record_ticket_sale(quantity: int):
         state = load_ticket_state()
 
         if not state.get("initialized"):
-            state["remaining"] = INITIAL_TICKETS
+            state["remaining"] = int(state.get("initial_tickets", INITIAL_TICKETS))
             state["initialized"] = True
 
         remaining = int(state.get("remaining", 0))
@@ -2605,7 +2641,8 @@ def ticket_state():
     remaining = state.get("remaining")
     tickets_sold_ui = None
     if isinstance(remaining, int):
-        tickets_sold_ui = max(INITIAL_TICKETS - remaining, 0)
+        _init = int(state.get("initial_tickets", INITIAL_TICKETS))
+        tickets_sold_ui = max(_init - remaining, 0)
 
     payload = {
         "remaining": remaining,
@@ -3203,11 +3240,10 @@ def recent_winners():
     """
     Returns list of recent winners indicating whether to show them.
     """
-    if not SHOW_RECENT_WINNERS:
+    if not _get_ui_toggle("recent_winners", SHOW_RECENT_WINNERS):
         return jsonify({"show": False, "winners": []}), 200
 
     winners = load_recent_winners()
-    # Optionally filter only winners with a specific date, etc.
     return jsonify({"show": True, "winners": winners}), 200
 
 @app.route("/check_ticket_status", methods=["POST"])
@@ -3304,10 +3340,10 @@ def address_toggles():
     Controlled via environment variables (default: true).
     """
     toggles = {
-        "usa": os.environ.get("ADDRESS_TOGGLE_USA", "true").lower() == "false",
-        "canada": os.environ.get("ADDRESS_TOGGLE_CANADA", "true").lower() == "false",
-        "australia": os.environ.get("ADDRESS_TOGGLE_AUSTRALIA", "true").lower() == "true",
-        "newZealand": os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "false",
+        "usa": _get_ui_toggle("address_usa", os.environ.get("ADDRESS_TOGGLE_USA", "true").lower() == "false"),
+        "canada": _get_ui_toggle("address_canada", os.environ.get("ADDRESS_TOGGLE_CANADA", "true").lower() == "false"),
+        "australia": _get_ui_toggle("address_australia", os.environ.get("ADDRESS_TOGGLE_AUSTRALIA", "true").lower() == "true"),
+        "newZealand": _get_ui_toggle("address_newzealand", os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "false"),
     }
     return jsonify(toggles), 200
 
@@ -3318,7 +3354,7 @@ def winners_detail_toggle():
     Returns a boolean indicating whether to show the WinnersDetail component.
     Default: false. Set environment variable SHOW_WINNERS_DETAIL=true to enable.
     """
-    show = os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true"
+    show = _get_ui_toggle("winners_detail", os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true")
     return jsonify({"show": show}), 200
 
 @app.route("/bootstrap", methods=["GET"])
@@ -3352,7 +3388,8 @@ def bootstrap():
         remaining = state.get("remaining")
         tickets_sold_ui = None
         if isinstance(remaining, int):
-            tickets_sold_ui = max(INITIAL_TICKETS - remaining, 0)
+            _init = int(state.get("initial_tickets", INITIAL_TICKETS))
+            tickets_sold_ui = max(_init - remaining, 0)
 
         ticket_payload = {
             "remaining": remaining,
@@ -3369,11 +3406,11 @@ def bootstrap():
 
     # --- winners_detail_toggle ---
     winners_toggle_payload = {
-        "show": os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true"
+        "show": _get_ui_toggle("winners_detail", os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true")
     }
 
     # --- recent_winners ---
-    if not SHOW_RECENT_WINNERS:
+    if not _get_ui_toggle("recent_winners", SHOW_RECENT_WINNERS):
         recent_winners_payload = {"show": False, "winners": []}
     else:
         recent_winners_payload = {
@@ -4224,6 +4261,134 @@ def team_set_phone(user_id):
     save_users(users)
     _audit(request, "user_phone_updated", target=found["username"], detail=f"phone={phone[:4]}***{phone[-2:]}")
     return jsonify({"status": "ok", "phone": phone}), 200
+
+
+@app.route("/admin/raffle/state", methods=["GET"])
+@limiter.limit("60 per minute")
+def admin_raffle_state():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    state = apply_daily_decay_if_needed()
+    remaining = state.get("remaining")
+    try:
+        remaining_int = int(remaining) if remaining is not None else 0
+    except Exception:
+        remaining_int = 0
+    initial_tickets = int(state.get("initial_tickets", INITIAL_TICKETS))
+    return jsonify({
+        "initialized":          bool(state.get("initialized", False)),
+        "remaining":            remaining,
+        "initial_tickets":      initial_tickets,
+        "tickets_sold":         max(initial_tickets - remaining_int, 0) if isinstance(remaining, int) else None,
+        "campaign_start_date":  state.get("campaign_start_date"),
+        "sold_out_at":          state.get("sold_out_at"),
+        "last_calc_date":       state.get("last_calc_date"),
+        "is_active":            bool(state.get("initialized") and remaining_int > 0),
+    }), 200
+
+
+@app.route("/admin/raffle/start", methods=["POST"])
+@limiter.limit("10 per minute")
+def admin_raffle_start():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    try:
+        new_initial = int(data.get("initial_tickets") or INITIAL_TICKETS)
+    except (ValueError, TypeError):
+        return jsonify({"error": "initial_tickets must be an integer"}), 400
+    if new_initial < 1 or new_initial > 1_000_000:
+        return jsonify({"error": "initial_tickets must be between 1 and 1,000,000"}), 400
+
+    with FileLock(STATE_LOCK_FILE):
+        state = load_ticket_state()
+        if state.get("initialized") and int(state.get("remaining", 0) or 0) > 0:
+            return jsonify({"error": "Campaign is already active. End it first."}), 409
+        prev_initial = state.get("initial_tickets", INITIAL_TICKETS)
+        prev_remaining = state.get("remaining")
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        state["initial_tickets"] = new_initial
+        state["remaining"] = new_initial
+        state["initialized"] = True
+        state["last_calc_date"] = today
+        state["campaign_start_date"] = today
+        state["sold_out_at"] = None
+        save_ticket_state(state)
+        if RESET_SALES_ON_CAMPAIGN_START:
+            write_sales(0)
+
+    _audit(request, "campaign_start", target=str(new_initial),
+           detail=f"prev_initial={prev_initial} prev_remaining={prev_remaining}")
+    return jsonify({
+        "status": "ok",
+        "initial_tickets": new_initial,
+        "remaining": new_initial,
+        "campaign_start_date": today,
+    }), 200
+
+
+@app.route("/admin/raffle/end", methods=["POST"])
+@limiter.limit("10 per minute")
+def admin_raffle_end():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    with FileLock(STATE_LOCK_FILE):
+        state = load_ticket_state()
+        if not state.get("initialized"):
+            return jsonify({"error": "No active campaign"}), 409
+        remaining_now = int(state.get("remaining", 0) or 0)
+        if remaining_now <= 0:
+            return jsonify({"error": "Campaign already ended"}), 409
+        state["remaining"] = 0
+        state["sold_out_at"] = datetime.utcnow().isoformat() + "Z"
+        save_ticket_state(state)
+        sold_out_at = state["sold_out_at"]
+
+    _audit(request, "campaign_end", target=str(remaining_now),
+           detail=f"sold_out_at={sold_out_at}")
+    return jsonify({"status": "ok", "sold_out_at": sold_out_at}), 200
+
+
+@app.route("/admin/ui-toggles", methods=["GET"])
+@limiter.limit("60 per minute")
+def admin_get_ui_toggles():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    toggles = {
+        "address_usa":        _get_ui_toggle("address_usa",        os.environ.get("ADDRESS_TOGGLE_USA", "true").lower() == "false"),
+        "address_canada":     _get_ui_toggle("address_canada",     os.environ.get("ADDRESS_TOGGLE_CANADA", "true").lower() == "false"),
+        "address_australia":  _get_ui_toggle("address_australia",  os.environ.get("ADDRESS_TOGGLE_AUSTRALIA", "true").lower() == "true"),
+        "address_newzealand": _get_ui_toggle("address_newzealand", os.environ.get("ADDRESS_TOGGLE_NEWZEALAND", "true").lower() == "false"),
+        "recent_winners":     _get_ui_toggle("recent_winners",     SHOW_RECENT_WINNERS),
+        "winners_detail":     _get_ui_toggle("winners_detail",     os.environ.get("SHOW_WINNERS_DETAIL", "false").lower() == "true"),
+    }
+    overridden = list(load_ui_toggles().keys())
+    return jsonify({"toggles": toggles, "overridden": overridden}), 200
+
+
+@app.route("/admin/ui-toggles", methods=["POST"])
+@limiter.limit("30 per minute")
+def admin_set_ui_toggle():
+    if not require_admin_or_session(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    key = (data.get("key") or "").strip()
+    if key not in {
+        "address_usa", "address_canada", "address_australia", "address_newzealand",
+        "recent_winners", "winners_detail",
+    }:
+        return jsonify({"error": "unknown toggle key"}), 400
+    if "value" not in data:
+        return jsonify({"error": "value required"}), 400
+    value = bool(data["value"])
+    state = load_ui_toggles()
+    if not isinstance(state, dict):
+        state = {}
+    prev = state.get(key)
+    state[key] = value
+    save_ui_toggles(state)
+    _audit(request, f"toggle_{key}", target=key, detail=f"prev={prev} new={value}")
+    return jsonify({"status": "ok", "key": key, "value": value}), 200
 
 
 @app.route("/team/audit", methods=["GET"])
