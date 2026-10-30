@@ -4555,10 +4555,9 @@ def admin_set_recent_winners_data():
         meta = load_recent_winners_meta()
         meta["title"] = title.strip()
         save_recent_winners_meta(meta)
-    detail = f"{len(winners)} entries"
-    if isinstance(title, str):
-        detail += f", title={title.strip()!r}"
-    _audit(request, "recent_winners_updated", target=detail)
+    audit_target = f"{len(winners)} entries"
+    audit_detail = f"title={title.strip()!r}" if isinstance(title, str) and title.strip() else ""
+    _audit(request, "recent_winners_updated", target=audit_target, detail=audit_detail)
     return jsonify({"status": "ok", "count": len(winners)}), 200
 
 
